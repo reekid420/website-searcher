@@ -163,7 +163,7 @@ fn derive_title_from_href(href: &str) -> Option<String> {
         return None;
     }
     let decoded = decode(segment).ok()?.to_string();
-    let replaced = decoded.replace('-', " ").replace('_', " ");
+    let replaced = decoded.replace(['-', '_'], " ");
     let words: Vec<String> = replaced
         .split_whitespace()
         .map(|w| {

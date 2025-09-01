@@ -24,9 +24,9 @@ pub fn print_table_grouped(results: &[SearchResult]) {
     }
     let mut current_site: Option<&str> = None;
     for r in results {
-        if current_site.map_or(true, |s| !s.eq_ignore_ascii_case(&r.site)) {
+        if current_site.is_none_or(|s| !s.eq_ignore_ascii_case(&r.site)) {
             if current_site.is_some() {
-                println!("");
+                println!();
             }
             println!("{}:", r.site);
             current_site = Some(&r.site);

@@ -7,6 +7,7 @@ struct FlareResponseSolution {
     response: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct FlareResponse {
     solution: FlareResponseSolution,

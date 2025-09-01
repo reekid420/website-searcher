@@ -23,8 +23,11 @@ pub struct SiteConfig {
     pub query_param: Option<&'static str>,
     pub listing_path: Option<&'static str>,
     pub result_selector: &'static str,
+    #[allow(dead_code)]
     pub title_attr: &'static str,
+    #[allow(dead_code)]
     pub url_attr: &'static str,
+    #[allow(dead_code)]
     pub requires_js: bool,
     pub requires_cloudflare: bool,
 }

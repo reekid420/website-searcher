@@ -1,11 +1,8 @@
 use crate::models::{SearchKind, SiteConfig};
-use serde_urlencoded;
 
 pub fn normalize_query(input: &str) -> String {
     input
-        .trim()
         .split_whitespace()
-        .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -14,7 +11,7 @@ pub fn build_search_url(site: &SiteConfig, query: &str) -> String {
     match site.search_kind {
         SearchKind::QueryParam => {
             let param = site.query_param.unwrap_or("s");
-            let qs = serde_urlencoded::to_string(&[(param, query)])
+            let qs = serde_urlencoded::to_string([(param, query)])
                 .unwrap_or_else(|_| format!("{}={}", param, query.replace(' ', "+")));
             format!("{}?{}", site.base_url, qs)
         }

@@ -37,7 +37,7 @@ fn normalize_title(site: &str, title: &str) -> String {
         .find(|l| !l.trim().is_empty())
         .unwrap_or(title)
         .to_string();
-    cleaned = cleaned.replace('\n', " ").replace('\r', " ");
+    cleaned = cleaned.replace(['\n', '\r'], " ");
     cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     cleaned = cleaned.trim().to_string();
     if site.eq_ignore_ascii_case("ankergames") {
@@ -232,7 +232,7 @@ async fn main() -> Result<()> {
                 if debug {
                     eprintln!("[debug] site={} using FlareSolverr {}", site.name, cf_url);
                 }
-                match if cookie_headers.is_some() {
+                (if cookie_headers.is_some() {
                     cf::fetch_via_solver_with_headers(
                         &client,
                         &url,
@@ -242,19 +242,15 @@ async fn main() -> Result<()> {
                     .await
                 } else {
                     fetch_via_solver(&client, &url, &cf_url).await
-                } {
-                    Ok(h) => h,
-                    Err(_) => String::new(),
-                }
+                })
+                .unwrap_or_default()
             } else {
-                match if cookie_headers.is_some() {
+                (if cookie_headers.is_some() {
                     fetcher::fetch_with_retry_headers(&client, &url, cookie_headers.clone()).await
                 } else {
                     fetch_with_retry(&client, &url).await
-                } {
-                    Ok(h) => h,
-                    Err(_) => String::new(),
-                }
+                })
+                .unwrap_or_default()
             };
             if debug {
                 eprintln!(
@@ -378,7 +374,7 @@ async fn main() -> Result<()> {
             for r in &mut results {
                 r.title = normalize_title(site.name, &r.title);
             }
-            if results.len() > 0 {
+            if !results.is_empty() {
                 results.truncate(cli.limit);
             }
             results
@@ -448,17 +444,12 @@ async fn fetch_gog_games_ajax_json(
     }
 
     for (i, u) in urls.into_iter().enumerate() {
-        let body = if use_cf {
-            match cf::fetch_via_solver_with_headers(client, &u, cf_url, Some(headers.clone())).await
-            {
-                Ok(b) => b,
-                Err(_) => String::new(),
-            }
+        let body: String = if use_cf {
+            (cf::fetch_via_solver_with_headers(client, &u, cf_url, Some(headers.clone())).await)
+                .unwrap_or_default()
         } else {
-            match fetcher::fetch_with_retry_headers(client, &u, Some(headers.clone())).await {
-                Ok(b) => b,
-                Err(_) => String::new(),
-            }
+            (fetcher::fetch_with_retry_headers(client, &u, Some(headers.clone())).await)
+                .unwrap_or_default()
         };
         if body.is_empty() {
             continue;
