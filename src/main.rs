@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use futures::stream::{FuturesUnordered, StreamExt};
 use scraper::{Html, Selector};
 use std::sync::Arc;
@@ -19,6 +19,14 @@ use fetcher::{build_http_client, fetch_with_retry};
 use models::{SearchResult, SearchKind};
 use parser::parse_results;
 use query::{build_search_url, normalize_query};
+use serde_json::Value;
+use reqwest::header::{HeaderMap as ReqHeaderMap, HeaderValue, HeaderName, ACCEPT, COOKIE, REFERER};
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum OutputFormat {
+    Json,
+    Table,
+}
 
 fn normalize_title(site: &str, title: &str) -> String {
     // Collapse whitespace
@@ -45,7 +53,7 @@ fn normalize_title(site: &str, title: &str) -> String {
 #[command(name = "websearcher", version, about = "Parallel game site searcher")] 
 struct Cli {
     /// Search phrase
-    query: String,
+    query: Option<String>,
 
     /// Limit results per site
     #[arg(long, default_value_t = 10)]
@@ -59,18 +67,42 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     debug: bool,
 
-    /// Use FlareSolverr Cloudflare solver (http://localhost:8191/v1 by default)
+    /// Output format: json or table
+    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+    format: OutputFormat,
+
+    /// Disable FlareSolverr Cloudflare solver (enabled by default). Use this to opt out.
     #[arg(long, default_value_t = false)]
-    use_cf: bool,
+    no_cf: bool,
     /// FlareSolverr endpoint
     #[arg(long, default_value = "http://localhost:8191/v1")]
     cf_url: String,
+
+    /// Cookie header to forward (e.g., from your browser) for protected sites
+    #[arg(long)]
+    cookie: Option<String>,
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let normalized = normalize_query(&cli.query);
+
+    // Interactive prompt when query omitted
+    let query_value: String = match &cli.query {
+        Some(q) => q.clone(),
+        None => {
+            println!("Website Searcher (interactive)\n");
+            use std::io::{self, Write};
+            print!("Search phrase: ");
+            let _ = io::stdout().flush();
+            let mut line = String::new();
+            io::stdin().read_line(&mut line)?;
+            let s = line.trim().to_string();
+            if s.is_empty() { anyhow::bail!("empty search phrase"); }
+            s
+        }
+    };
+    let normalized = normalize_query(&query_value);
 
     let selected_sites = if let Some(sites_csv) = cli.sites.as_deref() {
         let wanted: Vec<String> = sites_csv
@@ -90,13 +122,22 @@ async fn main() -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(3));
     let mut tasks = FuturesUnordered::new();
 
+    // Build optional headers (Cookie) for forwarding
+    let cookie_headers: Option<ReqHeaderMap> = if let Some(ref c) = cli.cookie {
+        match HeaderValue::from_str(c) {
+            Ok(v) => { let mut h = ReqHeaderMap::new(); h.insert(COOKIE, v); Some(h) }
+            Err(_) => None,
+        }
+    } else { None };
+
     for site in selected_sites {
         let permit = semaphore.clone().acquire_owned().await.unwrap();
         let client = client.clone();
         let query = normalized.clone();
         let debug = cli.debug;
-        let use_cf = cli.use_cf;
+        let use_cf = !cli.no_cf;
         let cf_url = cli.cf_url.clone();
+        let cookie_headers = cookie_headers.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = permit; // hold until task end
             let url = match site.search_kind {
@@ -105,12 +146,12 @@ async fn main() -> Result<()> {
             };
             let html = if site.requires_cloudflare && use_cf {
                 if debug { eprintln!("[debug] site={} using FlareSolverr {}", site.name, cf_url); }
-                match fetch_via_solver(&client, &url, &cf_url).await {
+                match if cookie_headers.is_some() { cf::fetch_via_solver_with_headers(&client, &url, &cf_url, cookie_headers.clone()).await } else { fetch_via_solver(&client, &url, &cf_url).await } {
                     Ok(h) => h,
                     Err(_) => String::new(),
                 }
             } else {
-                match fetch_with_retry(&client, &url).await {
+                match if cookie_headers.is_some() { fetcher::fetch_with_retry_headers(&client, &url, cookie_headers.clone()).await } else { fetch_with_retry(&client, &url).await } {
                     Ok(h) => h,
                     Err(_) => String::new(),
                 }
@@ -124,6 +165,12 @@ async fn main() -> Result<()> {
                 );
             }
             let mut results = parse_results(&site, &html, &query);
+            // gog-games fallback: request AJAX JSON/fragment when DOM is empty
+            if results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
+                if let Some(r) = fetch_gog_games_ajax_json(&client, &site, &query, use_cf, &cf_url, cookie_headers.clone(), debug).await {
+                    if !r.is_empty() { results = r; }
+                }
+            }
             if debug {
                 eprintln!("[debug] site={} results={} (pre-truncate)", site.name, results.len());
                 if results.is_empty() {
@@ -208,6 +255,100 @@ async fn main() -> Result<()> {
     combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.title.cmp(&b.title)));
     combined.dedup_by(|a, b| a.site == b.site && a.url == b.url);
 
-    output::print_pretty_json(&combined);
+    let out_format = if cli.query.is_none() { OutputFormat::Table } else { cli.format };
+    match out_format {
+        OutputFormat::Json => output::print_pretty_json(&combined),
+        OutputFormat::Table => output::print_table_grouped(&combined),
+    }
     Ok(())
+}
+
+async fn fetch_gog_games_ajax_json(
+    client: &reqwest::Client,
+    site: &crate::models::SiteConfig,
+    query: &str,
+    use_cf: bool,
+    cf_url: &str,
+    cookie_headers: Option<ReqHeaderMap>,
+    debug: bool,
+) -> Option<Vec<SearchResult>> {
+    let qenc = urlencoding::encode(query);
+    let urls = vec![
+        format!("https://gog-games.to/search?search={}&page=1&den_filter=none", qenc),
+        format!("https://gog-games.to/search?page=1&search={}", qenc),
+        format!("https://gog-games.to/?search={}", qenc),
+    ];
+    // build headers
+    let mut headers = ReqHeaderMap::new();
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json, text/plain, */*"));
+    headers.insert(HeaderName::from_static("x-requested-with"), HeaderValue::from_static("XMLHttpRequest"));
+    headers.insert(REFERER, HeaderValue::from_str(&format!("https://gog-games.to/?search={}", qenc)).unwrap_or(HeaderValue::from_static("https://gog-games.to/")));
+    if let Some(ch) = &cookie_headers { for (k, v) in ch.iter() { headers.insert(k, v.clone()); } }
+
+    for (i, u) in urls.into_iter().enumerate() {
+        let body = if use_cf {
+            match cf::fetch_via_solver_with_headers(client, &u, cf_url, Some(headers.clone())).await { Ok(b) => b, Err(_) => String::new() }
+        } else {
+            match fetcher::fetch_with_retry_headers(client, &u, Some(headers.clone())).await { Ok(b) => b, Err(_) => String::new() }
+        };
+        if body.is_empty() { continue; }
+        if debug { let _ = tokio::fs::create_dir_all("debug").await; let _ = tokio::fs::write(format!("debug/gog-games_ajax_{}.txt", i), &body).await; }
+        let trimmed = body.trim_start();
+        if trimmed.starts_with('<') {
+            // Try to extract JSON inside <pre>...</pre>
+            if let (Some(sidx), Some(eidx)) = (trimmed.find("<pre>"), trimmed.find("</pre>")) {
+                let s = sidx + 5;
+                if s < eidx {
+                    let json_inner = &trimmed[s..eidx];
+                    if let Ok(v) = serde_json::from_str::<Value>(json_inner) {
+                        let mut results: Vec<SearchResult> = Vec::new();
+                        collect_title_url_pairs(&v, &mut results);
+                        if !results.is_empty() { return Some(results); }
+                    }
+                }
+            }
+            // else treat as HTML fragment
+            let rs = parse_results(site, &body, query);
+            if !rs.is_empty() { return Some(rs); }
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(&body) {
+            if let Some(html) = v.get("html").and_then(|x| x.as_str()) {
+                let rs = parse_results(site, html, query);
+                if !rs.is_empty() { return Some(rs); }
+            }
+            if let Some(html) = v.get("data").and_then(|x| x.get("html")).and_then(|x| x.as_str()) {
+                let rs = parse_results(site, html, query);
+                if !rs.is_empty() { return Some(rs); }
+            }
+            let mut results: Vec<SearchResult> = Vec::new();
+            collect_title_url_pairs(&v, &mut results);
+            if !results.is_empty() { return Some(results); }
+        }
+    }
+    None
+}
+
+fn collect_title_url_pairs(v: &Value, out: &mut Vec<SearchResult>) {
+    match v {
+        Value::Object(map) => {
+            let title = map.get("title").and_then(|x| x.as_str()).or_else(|| map.get("name").and_then(|x| x.as_str()));
+            let mut url = map.get("url").and_then(|x| x.as_str())
+                .or_else(|| map.get("permalink").and_then(|x| x.as_str()))
+                .or_else(|| map.get("href").and_then(|x| x.as_str()))
+                .or_else(|| map.get("path").and_then(|x| x.as_str()));
+            if url.is_none() {
+                if let Some(slug) = map.get("slug").and_then(|x| x.as_str()) {
+                    url = Some(Box::leak(format!("https://gog-games.to/game/{}", slug).into_boxed_str()));
+                }
+            }
+            if let (Some(t), Some(u)) = (title, url) {
+                let u_abs = if u.starts_with('/') { format!("https://gog-games.to{}", u) } else { u.to_string() };
+                out.push(SearchResult { site: "gog-games".to_string(), title: t.to_string(), url: u_abs });
+            }
+            for val in map.values() { collect_title_url_pairs(val, out); }
+        }
+        Value::Array(arr) => { for val in arr { collect_title_url_pairs(val, out); } }
+        _ => {}
+    }
 }

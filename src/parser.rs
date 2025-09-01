@@ -19,7 +19,16 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
         let mut primary: Vec<SearchResult> = Vec::new();
         for el in document.select(&sel) {
             let mut title = el.text().collect::<String>().trim().to_string();
-            let url = el.value().attr("href").unwrap_or("").to_string();
+            // Extract href; if empty, try parent element (some cards wrap anchors)
+            let mut href = el.value().attr("href").unwrap_or("");
+            if href.is_empty() {
+                if let Some(parent) = el.parent() {
+                    if let Some(pel) = parent.value().as_element() {
+                        if let Some(h) = pel.attr("href") { href = h; }
+                    }
+                }
+            }
+            let url = href.to_string();
             if url.is_empty() {
                 continue;
             }

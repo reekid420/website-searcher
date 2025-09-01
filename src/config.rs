@@ -123,7 +123,7 @@ pub fn site_configs() -> Vec<SiteConfig> {
         SiteConfig {
             name: "ankergames",
             base_url: "https://ankergames.net/search/",
-            search_kind: SearchKind::ListingPage,
+            search_kind: SearchKind::PathEncoded,
             query_param: None,
             listing_path: Some("https://ankergames.net/games-list"),
             result_selector: "div a[href^='/game/'], a.game-card, h2 a, h3 a",

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, header::HeaderMap};
 use tokio::time::sleep;
 
 pub fn build_http_client() -> Client {
@@ -43,6 +43,39 @@ pub async fn fetch_with_retry(client: &Client, url: &str) -> Result<String> {
         }
 
         // Backoff 300ms * 2^attempt
+        let backoff_ms = 300u64.saturating_mul(1u64 << attempt);
+        sleep(Duration::from_millis(backoff_ms)).await;
+        attempt += 1;
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("unknown error fetching {}", url)))
+}
+
+pub async fn fetch_with_retry_headers(client: &Client, url: &str, headers: Option<HeaderMap>) -> Result<String> {
+    let mut attempt: u32 = 0;
+    let max_attempts: u32 = 3;
+    let mut last_err: Option<anyhow::Error> = None;
+
+    while attempt < max_attempts {
+        let mut rb = client.get(url);
+        if let Some(h) = headers.clone() { rb = rb.headers(h); }
+        let resp = rb.send().await;
+        match resp {
+            Ok(r) => {
+                if r.status() == StatusCode::OK {
+                    let text = r.text().await.context("read body text")?;
+                    return Ok(text);
+                } else if r.status().is_redirection() || r.status() == StatusCode::FORBIDDEN {
+                    return Ok(String::new());
+                } else {
+                    last_err = Some(anyhow::anyhow!("HTTP status {} for {}", r.status(), url));
+                }
+            }
+            Err(e) => {
+                last_err = Some(e.into());
+            }
+        }
+
         let backoff_ms = 300u64.saturating_mul(1u64 << attempt);
         sleep(Duration::from_millis(backoff_ms)).await;
         attempt += 1;

@@ -51,6 +51,7 @@ Interactive mode:
 - CF is enabled by default. Run FlareSolverr locally if needed:
   - `docker run -d --name flaresolverr -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest`
 - `gog-games`: solver is ignored; uses normal fetch plus AJAX JSON/HTML fragment fallback. Cookies often improve results.
+- `ankergames`: uses path-encoded search (spaces as `%20`) and improved selectors; listing page parsing supported.
 - Selectors are best-effort with fallbacks; contributions to improve coverage are welcome.
 
 ### Docker / Devcontainer
