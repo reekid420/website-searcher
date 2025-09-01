@@ -20,24 +20,18 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
         for el in document.select(&sel) {
             let mut title = el.text().collect::<String>().trim().to_string();
             // Extract href; if empty, try parent element (some cards wrap anchors)
-            let mut href = el.value().attr("href").unwrap_or("");
-            if href.is_empty() {
-                if let Some(parent) = el.parent() {
-                    if let Some(pel) = parent.value().as_element() {
-                        if let Some(h) = pel.attr("href") {
-                            href = h;
-                        }
-                    }
-                }
-            }
+            let href_attr = el.value().attr("href").or_else(|| {
+                el.parent()
+                    .and_then(|p| p.value().as_element())
+                    .and_then(|pel| pel.attr("href"))
+            });
+            let href = href_attr.unwrap_or("");
             let url = href.to_string();
             if url.is_empty() {
                 continue;
             }
             if title.is_empty() {
-                if let Some(derived) = derive_title_from_href(&url) {
-                    title = derived;
-                }
+                title = derive_title_from_href(&url).unwrap_or(title);
             }
             if site.name.eq_ignore_ascii_case("fitgirl") {
                 if let Some(clean) = filter_and_normalize_fitgirl(&url, &title) {

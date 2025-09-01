@@ -261,7 +261,6 @@ async fn main() -> Result<()> {
                 );
             }
             let mut results = parse_results(&site, &html, &query);
-            // gog-games fallback: request AJAX JSON/fragment when DOM is empty
             if results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
                 if let Some(r) = fetch_gog_games_ajax_json(
                     &client,
