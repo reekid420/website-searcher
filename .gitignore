@@ -1,1 +1,34 @@
-target
+# Rust build output
+/target
+
+# Debug artifacts written by --debug
+/debug/
+
+# Local binaries (if built/copied to repo root)
+/website-searcher
+/website-searcher.exe
+/website_searcher
+/website_searcher.exe
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Env/config overrides
+.env
+.env.*
+.envrc
+docker-compose.override.yml
+*.local.yml
+
+# Logs & temp
+*.log
+*.tmp
+*.swp
+
+# Coverage (if generated locally)
+/coverage/

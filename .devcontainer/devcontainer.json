@@ -1,0 +1,17 @@
+{
+	"name": "website-searcher-dev",
+	"dockerComposeFile": [
+		"../docker-compose.dev.yml"
+	],
+	"service": "app",
+	"shutdownAction": "stopCompose",
+	"workspaceFolder": "/workspace",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"tamasfe.even-better-toml"
+			]
+		}
+	}
+}

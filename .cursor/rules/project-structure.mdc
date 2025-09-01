@@ -1,0 +1,37 @@
+---
+alwaysApply: true
+description: High-level project structure and entry points for website-searcher
+---
+
+# Project Structure Guide
+
+Entry points and modules:
+- CLI entry and orchestration: [src/main.rs](mdc:src/main.rs)
+- Site configs and selectors: [src/config.rs](mdc:src/config.rs)
+- HTTP client and retry: [src/fetcher.rs](mdc:src/fetcher.rs)
+- Cloudflare (FlareSolverr) integration: [src/cf.rs](mdc:src/cf.rs)
+- Parsing helpers and fallbacks: [src/parser.rs](mdc:src/parser.rs)
+- Query normalization and URL builder: [src/query.rs](mdc:src/query.rs)
+- Models (SearchKind, SiteConfig, SearchResult): [src/models.rs](mdc:src/models.rs)
+- Output (colored JSON): [src/output.rs](mdc:src/output.rs)
+- Docs and plan: [README.md](mdc:README.md), [PLAN.md](mdc:PLAN.md), [CLOUDFLARE_BYPASS_PLAN.md](mdc:CLOUDFLARE_BYPASS_PLAN.md)
+- Debug HTML samples (optional): [debug/](mdc:debug/)
+
+CLI flags (see [src/main.rs](mdc:src/main.rs)):
+- `--limit`, `--sites a,b,c`, `--debug`, `--format [json|table]`
+- Cloudflare: CF is ON by default; use `--no-cf` to disable; `--cf_url` to override endpoint
+- Cookies: `--cookie "key=value; other=value2"` (forwarded to requests and solver)
+
+Interactive mode:
+- If the query is omitted, the app prompts for the search phrase and site selection (with All as default). Interactive output defaults to table.
+
+Adding a new site:
+1) Add a `SiteConfig` entry in [src/config.rs](mdc:src/config.rs). Choose `SearchKind::{QueryParam, PathEncoded, FrontPage, ListingPage}` and define `result_selector`.
+2) If Cloudflare protected, set `requires_cloudflare = true` (solver is used unless `--no-cf`).
+3) Ensure [src/parser.rs](mdc:src/parser.rs) fallback anchor scan can derive titles from slug when anchor text is empty; add site-specific filters if needed.
+4) Validate with `--debug` (writes HTML/JSON when empty); tune selectors using saved files in [debug/](mdc:debug/).
+
+Notes:
+- Concurrency is capped to 3 (Tokio semaphore).
+- Results are sorted and deduplicated by `(site, url)`.
+- `gog-games` special-case: solver is ignored; uses normal fetch + AJAX JSON/HTML fragment fallback (cookies recommended).
