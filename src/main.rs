@@ -509,6 +509,7 @@ async fn fetch_gog_games_ajax_json(
     None
 }
 
+#[allow(clippy::collapsible_if)]
 fn collect_title_url_pairs(v: &Value, out: &mut Vec<SearchResult>) {
     match v {
         Value::Object(map) => {
