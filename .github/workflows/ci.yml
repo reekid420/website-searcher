@@ -7,7 +7,18 @@ on:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    name: build-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest           # x86_64 Linux
+          - os: ubuntu-24.04-arm        # arm64 Linux
+          - os: macos-13                # x86_64 macOS
+          - os: macos-14                # arm64 macOS (Apple Silicon)
+          - os: windows-latest          # x86_64 Windows
+          - os: windows-11-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,6 +47,7 @@ jobs:
       - name: test
         env:
           RUST_BACKTRACE: 1
+          NO_COLOR: 1
         run: cargo test --all --verbose --locked
  
       - name: install audit
