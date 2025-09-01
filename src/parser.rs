@@ -227,33 +227,35 @@ fn parse_elamigos(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchResul
             continue;
         }
         // Find the first link in this heading
-        if let Ok(a_sel) = Selector::parse("a[href]") {
-            if let Some(a) = heading.select(&a_sel).next() {
-                let href = a.value().attr("href").unwrap_or("");
-                if href.is_empty() {
-                    continue;
-                }
-                // Build absolute URL
-                let mut url = href.to_string();
-                if !(href.starts_with("http://")
-                    || href.starts_with("https://")
-                    || href.starts_with("//"))
-                {
-                    let base = site.base_url.trim_end_matches('/');
-                    if href.starts_with('/') {
-                        url = format!("{}{}", base, href);
-                    } else {
-                        url = format!("{}/{}", base, href.trim_start_matches('/'));
-                    }
-                }
-                // Title: remove trailing DOWNLOAD and trim
-                let title = text_norm.replace("DOWNLOAD", "").trim().to_string();
-                results.push(SearchResult {
-                    site: site.name.to_string(),
-                    title,
-                    url,
-                });
+        let a_sel = match Selector::parse("a[href]") {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if let Some(a) = heading.select(&a_sel).next() {
+            let href = a.value().attr("href").unwrap_or("");
+            if href.is_empty() {
+                continue;
             }
+            // Build absolute URL
+            let mut url = href.to_string();
+            if !(href.starts_with("http://")
+                || href.starts_with("https://")
+                || href.starts_with("//"))
+            {
+                let base = site.base_url.trim_end_matches('/');
+                if href.starts_with('/') {
+                    url = format!("{}{}", base, href);
+                } else {
+                    url = format!("{}/{}", base, href.trim_start_matches('/'));
+                }
+            }
+            // Title: remove trailing DOWNLOAD and trim
+            let title = text_norm.replace("DOWNLOAD", "").trim().to_string();
+            results.push(SearchResult {
+                site: site.name.to_string(),
+                title,
+                url,
+            });
         }
     }
 

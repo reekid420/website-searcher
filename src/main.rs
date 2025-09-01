@@ -114,12 +114,13 @@ async fn main() -> Result<()> {
 
     // Resolve CF URL: prefer CLI if non-default; otherwise allow CF_URL env override (for Docker)
     let mut resolved_cf_url = cli.cf_url.clone();
-    if resolved_cf_url == "http://localhost:8191/v1" {
-        if let Ok(env_cf) = std::env::var("CF_URL") {
-            if !env_cf.trim().is_empty() {
-                resolved_cf_url = env_cf;
-            }
-        }
+    if let (true, Some(env_cf)) = (
+        resolved_cf_url == "http://localhost:8191/v1",
+        std::env::var("CF_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+    ) {
+        resolved_cf_url = env_cf;
     }
 
     // All site configs loaded once
@@ -165,14 +166,15 @@ async fn main() -> Result<()> {
         // Map tokens to unique site names by name or 1-based index
         let mut chosen: Vec<&str> = Vec::new();
         for t in tokens {
-            if let Ok(idx1) = t.parse::<usize>() {
-                if idx1 >= 1 && idx1 <= all_sites.len() {
+            match t.parse::<usize>() {
+                Ok(idx1) if (1..=all_sites.len()).contains(&idx1) => {
                     let name = all_sites[idx1 - 1].name;
                     if !chosen.iter().any(|c| c.eq_ignore_ascii_case(name)) {
                         chosen.push(name);
                     }
                     continue;
                 }
+                _ => {}
             }
             // match by name
             if let Some(s) = all_sites.iter().find(|s| s.name.eq_ignore_ascii_case(&t)) {
@@ -261,8 +263,9 @@ async fn main() -> Result<()> {
                 );
             }
             let mut results = parse_results(&site, &html, &query);
+            // gog-games fallback: request AJAX JSON/fragment when DOM is empty
             if results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
-                if let Some(r) = fetch_gog_games_ajax_json(
+                match fetch_gog_games_ajax_json(
                     &client,
                     &site,
                     &query,
@@ -273,9 +276,8 @@ async fn main() -> Result<()> {
                 )
                 .await
                 {
-                    if !r.is_empty() {
-                        results = r;
-                    }
+                    Some(r) if !r.is_empty() => results = r,
+                    _ => {}
                 }
             }
             if debug {
