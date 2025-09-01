@@ -16,7 +16,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.87.0
-          components: rustfmt, clippy, audit
+          components: rustfmt, clippy
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -38,5 +38,8 @@ jobs:
           RUST_BACKTRACE: 1
         run: cargo test --all --verbose --locked
  
-      - name: Security audit
+      - name: install audit
+        run: cargo install cargo-audit
+      
+      - name: audit
         run: cargo audit
