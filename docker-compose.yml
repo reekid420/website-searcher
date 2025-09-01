@@ -25,10 +25,11 @@ services:
   tests:
     image: rust:1.89
     container_name: website-searcher-tests
+    platform: linux/amd64
     working_dir: /workspace
     volumes:
       - ./:/workspace
     environment:
       - RUST_BACKTRACE=1
     # CF_URL not required for tests (mocked)
-    entrypoint: ["bash", "-lc", "cargo test"]
+    entrypoint: ["cargo", "test", "--all", "--locked", "--verbose"]
