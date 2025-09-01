@@ -64,8 +64,9 @@ docker run --rm -it -e CF_URL=http://host.docker.internal:8191/v1 websearcher
 
 - Devcontainer / Compose (starts FlareSolverr and the app):
 ```bash
-docker compose -f docker-compose.dev.yml up --build
+docker compose up --build
 # App runs interactively inside the container; FlareSolverr available at http://flaresolverr:8191/v1
+# The runtime container runs as a non-root user for improved security.
 ```
 
 - VS Code devcontainer: open the folder and "Reopen in Container".

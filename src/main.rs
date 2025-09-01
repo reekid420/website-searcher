@@ -517,24 +517,23 @@ fn collect_title_url_pairs(v: &Value, out: &mut Vec<SearchResult>) {
                 .get("title")
                 .and_then(|x| x.as_str())
                 .or_else(|| map.get("name").and_then(|x| x.as_str()));
-            let mut url = map
+            let mut url: Option<String> = map
                 .get("url")
                 .and_then(|x| x.as_str())
-                .or_else(|| map.get("permalink").and_then(|x| x.as_str()))
-                .or_else(|| map.get("href").and_then(|x| x.as_str()))
-                .or_else(|| map.get("path").and_then(|x| x.as_str()));
+                .map(|s| s.to_string())
+                .or_else(|| map.get("permalink").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                .or_else(|| map.get("href").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                .or_else(|| map.get("path").and_then(|x| x.as_str()).map(|s| s.to_string()));
             if url.is_none() {
                 if let Some(slug) = map.get("slug").and_then(|x| x.as_str()) {
-                    url = Some(Box::leak(
-                        format!("https://gog-games.to/game/{}", slug).into_boxed_str(),
-                    ));
+                    url = Some(format!("https://gog-games.to/game/{}", slug));
                 }
             }
             if let (Some(t), Some(u)) = (title, url) {
                 let u_abs = if u.starts_with('/') {
                     format!("https://gog-games.to{}", u)
                 } else {
-                    u.to_string()
+                    u
                 };
                 out.push(SearchResult {
                     site: "gog-games".to_string(),
