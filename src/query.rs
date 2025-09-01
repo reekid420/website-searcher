@@ -1,10 +1,7 @@
 use crate::models::{SearchKind, SiteConfig};
 
 pub fn normalize_query(input: &str) -> String {
-    input
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub fn build_search_url(site: &SiteConfig, query: &str) -> String {
