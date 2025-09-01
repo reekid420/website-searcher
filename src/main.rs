@@ -521,9 +521,21 @@ fn collect_title_url_pairs(v: &Value, out: &mut Vec<SearchResult>) {
                 .get("url")
                 .and_then(|x| x.as_str())
                 .map(|s| s.to_string())
-                .or_else(|| map.get("permalink").and_then(|x| x.as_str()).map(|s| s.to_string()))
-                .or_else(|| map.get("href").and_then(|x| x.as_str()).map(|s| s.to_string()))
-                .or_else(|| map.get("path").and_then(|x| x.as_str()).map(|s| s.to_string()));
+                .or_else(|| {
+                    map.get("permalink")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    map.get("href")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    map.get("path")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string())
+                });
             if url.is_none() {
                 if let Some(slug) = map.get("slug").and_then(|x| x.as_str()) {
                     url = Some(format!("https://gog-games.to/game/{}", slug));
