@@ -64,9 +64,16 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
             primary.retain(|r| {
                 let tl = r.title.to_lowercase();
                 let ul = r.url.to_lowercase();
-                tl.contains(&ql) || ul.contains(&ql) || ul.contains(&ql_dash) || ul.contains(&ql_plus) || ul.contains(&ql_encoded) || ul.contains(&ql_stripped)
+                tl.contains(&ql)
+                    || ul.contains(&ql)
+                    || ul.contains(&ql_dash)
+                    || ul.contains(&ql_plus)
+                    || ul.contains(&ql_encoded)
+                    || ul.contains(&ql_stripped)
             });
-            if !primary.is_empty() { return primary; }
+            if !primary.is_empty() {
+                return primary;
+            }
         }
     }
 
@@ -311,7 +318,11 @@ mod tests {
             <a href="/unrelated">Something else</a>
         </body></html>"#;
         let results = parse_results(&cfg(), html, "elden ring");
-        assert!(results.len() >= 3, "expected at least 3 results, got {}", results.len());
+        assert!(
+            results.len() >= 3,
+            "expected at least 3 results, got {}",
+            results.len()
+        );
         let urls: Vec<String> = results.into_iter().map(|r| r.url).collect();
         assert!(urls.contains(&"https://example.com/post-slug/".to_string()));
         assert!(urls.contains(&"https://example.com/absolute-path/".to_string()));

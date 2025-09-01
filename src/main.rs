@@ -104,7 +104,9 @@ async fn main() -> Result<()> {
             let mut line = String::new();
             io::stdin().read_line(&mut line)?;
             let s = line.trim().to_string();
-            if s.is_empty() { anyhow::bail!("empty search phrase"); }
+            if s.is_empty() {
+                anyhow::bail!("empty search phrase");
+            }
             s
         }
     };
@@ -114,7 +116,9 @@ async fn main() -> Result<()> {
     let mut resolved_cf_url = cli.cf_url.clone();
     if resolved_cf_url == "http://localhost:8191/v1" {
         if let Ok(env_cf) = std::env::var("CF_URL") {
-            if !env_cf.trim().is_empty() { resolved_cf_url = env_cf; }
+            if !env_cf.trim().is_empty() {
+                resolved_cf_url = env_cf;
+            }
         }
     }
 
@@ -143,7 +147,9 @@ async fn main() -> Result<()> {
                 .collect();
             Some(tokens)
         }
-    } else { None };
+    } else {
+        None
+    };
 
     let selected_sites = if let Some(sites_csv) = cli.sites.as_deref() {
         let wanted: Vec<String> = sites_csv
