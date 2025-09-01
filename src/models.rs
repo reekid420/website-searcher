@@ -28,5 +28,3 @@ pub struct SiteConfig {
     pub requires_js: bool,
     pub requires_cloudflare: bool,
 }
-
-

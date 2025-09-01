@@ -135,4 +135,44 @@ pub fn site_configs() -> Vec<SiteConfig> {
     ]
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn fitgirl_and_dodi_require_cloudflare() {
+        let cfgs = site_configs();
+        let fitgirl = cfgs.iter().find(|c| c.name == "fitgirl").unwrap();
+        let dodi = cfgs.iter().find(|c| c.name == "dodi").unwrap();
+        assert!(fitgirl.requires_cloudflare);
+        assert!(dodi.requires_cloudflare);
+    }
+
+    #[test]
+    fn gog_games_not_cloudflare_and_has_queryparam() {
+        let cfgs = site_configs();
+        let gog = cfgs.iter().find(|c| c.name == "gog-games").unwrap();
+        assert!(!gog.requires_cloudflare);
+        assert!(matches!(
+            gog.search_kind,
+            crate::models::SearchKind::QueryParam
+        ));
+        assert_eq!(gog.query_param, Some("search"));
+    }
+
+    #[test]
+    fn elamigos_is_frontpage_and_ankergames_pathencoded() {
+        let cfgs = site_configs();
+        let ela = cfgs.iter().find(|c| c.name == "elamigos").unwrap();
+        let anker = cfgs.iter().find(|c| c.name == "ankergames").unwrap();
+        assert!(matches!(
+            ela.search_kind,
+            crate::models::SearchKind::FrontPage
+        ));
+        assert!(matches!(
+            anker.search_kind,
+            crate::models::SearchKind::PathEncoded
+        ));
+        assert!(anker.listing_path.is_some());
+    }
+}

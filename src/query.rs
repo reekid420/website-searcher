@@ -38,6 +38,13 @@ mod tests {
     }
 
     #[test]
+    fn normalize_handles_empty_and_tabs() {
+        assert_eq!(normalize_query("\t\t"), "");
+        assert_eq!(normalize_query("a\t\tb"), "a b");
+        assert_eq!(normalize_query(" a \n b \r\n c "), "a b c");
+    }
+
+    #[test]
     fn build_queryparam_s() {
         let cfg = SiteConfig {
             name: "x",
@@ -73,6 +80,40 @@ mod tests {
         let url = build_search_url(&cfg, &normalize_query("elden ring"));
         assert_eq!(url, "https://ankergames.net/search/elden%20ring");
     }
+
+    #[test]
+    fn build_frontpage_returns_base() {
+        let cfg = SiteConfig {
+            name: "front",
+            base_url: "https://front.example/",
+            search_kind: SearchKind::FrontPage,
+            query_param: None,
+            listing_path: None,
+            result_selector: "a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let url = build_search_url(&cfg, &normalize_query("anything"));
+        assert_eq!(url, "https://front.example/");
+    }
+
+    #[test]
+    fn build_listingpage_returns_base() {
+        let cfg = SiteConfig {
+            name: "list",
+            base_url: "https://list.example/",
+            search_kind: SearchKind::ListingPage,
+            query_param: None,
+            listing_path: None,
+            result_selector: "a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let url = build_search_url(&cfg, &normalize_query("anything"));
+        assert_eq!(url, "https://list.example/");
+    }
 }
-
-

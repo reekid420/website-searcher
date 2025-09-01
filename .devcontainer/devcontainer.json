@@ -1,7 +1,7 @@
 {
 	"name": "website-searcher-dev",
 	"dockerComposeFile": [
-		"../docker-compose.dev.yml"
+		"../docker-compose.yml"
 	],
 	"service": "app",
 	"shutdownAction": "stopCompose",

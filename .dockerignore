@@ -1,0 +1,16 @@
+target/
+.git/
+.gitignore
+.debug/
+debug/
+**/*.log
+**/*.tmp
+**/*.swp
+**/*.swo
+**/.DS_Store
+**/Thumbs.db
+**/node_modules/
+**/.vscode/
+**/.idea/
+**/.cursor/
+**/.venv/

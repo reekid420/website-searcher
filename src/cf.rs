@@ -38,7 +38,12 @@ pub async fn fetch_via_solver(client: &Client, url: &str, solver_url: &str) -> R
     Ok(fr.solution.response)
 }
 
-pub async fn fetch_via_solver_with_headers(client: &Client, url: &str, solver_url: &str, headers: Option<HeaderMap>) -> Result<String> {
+pub async fn fetch_via_solver_with_headers(
+    client: &Client,
+    url: &str,
+    solver_url: &str,
+    headers: Option<HeaderMap>,
+) -> Result<String> {
     let mut payload = serde_json::json!({
         "cmd": "request.get",
         "url": url,
@@ -47,7 +52,9 @@ pub async fn fetch_via_solver_with_headers(client: &Client, url: &str, solver_ur
     if let Some(hm) = headers {
         let mut map = serde_json::Map::new();
         for (k, v) in hm.iter() {
-            if let Ok(vs) = v.to_str() { map.insert(k.to_string(), serde_json::Value::String(vs.to_string())); }
+            if let Ok(vs) = v.to_str() {
+                map.insert(k.to_string(), serde_json::Value::String(vs.to_string()));
+            }
         }
         payload["headers"] = serde_json::Value::Object(map);
     }
@@ -69,4 +76,66 @@ pub async fn fetch_via_solver_with_headers(client: &Client, url: &str, solver_ur
     Ok(fr.solution.response)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::{Matcher, Server};
 
+    #[tokio::test]
+    async fn solver_success_returns_response_body() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_body(r#"{"solution":{"response":"<html>ok</html>"},"status":"ok"}"#)
+            .create_async()
+            .await;
+        let client = Client::new();
+        let body = fetch_via_solver(&client, "https://example.com/", &server.url())
+            .await
+            .unwrap();
+        assert!(body.contains("<html>ok</html>"));
+    }
+
+    #[tokio::test]
+    async fn solver_non_200_is_error() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("POST", "/")
+            .with_status(500)
+            .with_body("err")
+            .create_async()
+            .await;
+        let client = Client::new();
+        let err = fetch_via_solver(&client, "https://example.com/", &server.url())
+            .await
+            .err()
+            .unwrap();
+        let msg = format!("{}", err);
+        assert!(msg.contains("flaresolverr http status"));
+    }
+
+    #[tokio::test]
+    async fn solver_headers_are_forwarded_in_payload() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("\\\"cmd\\\":\\\"request.get\\\"".into()))
+            .match_body(Matcher::Regex("cf_clearance=abc; a=b".into()))
+            .with_status(200)
+            .with_body(r#"{"solution":{"response":"<html>ok</html>"},"status":"ok"}"#)
+            .create_async()
+            .await;
+        let client = Client::new();
+        let mut hm = HeaderMap::new();
+        hm.insert(
+            reqwest::header::COOKIE,
+            reqwest::header::HeaderValue::from_static("cf_clearance=abc; a=b"),
+        );
+        let body =
+            fetch_via_solver_with_headers(&client, "https://example.com/", &server.url(), Some(hm))
+                .await
+                .unwrap();
+        assert!(body.contains("<html>ok</html>"));
+    }
+}

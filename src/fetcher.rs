@@ -51,14 +51,20 @@ pub async fn fetch_with_retry(client: &Client, url: &str) -> Result<String> {
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("unknown error fetching {}", url)))
 }
 
-pub async fn fetch_with_retry_headers(client: &Client, url: &str, headers: Option<HeaderMap>) -> Result<String> {
+pub async fn fetch_with_retry_headers(
+    client: &Client,
+    url: &str,
+    headers: Option<HeaderMap>,
+) -> Result<String> {
     let mut attempt: u32 = 0;
     let max_attempts: u32 = 3;
     let mut last_err: Option<anyhow::Error> = None;
 
     while attempt < max_attempts {
         let mut rb = client.get(url);
-        if let Some(h) = headers.clone() { rb = rb.headers(h); }
+        if let Some(h) = headers.clone() {
+            rb = rb.headers(h);
+        }
         let resp = rb.send().await;
         match resp {
             Ok(r) => {
@@ -84,4 +90,101 @@ pub async fn fetch_with_retry_headers(client: &Client, url: &str, headers: Optio
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("unknown error fetching {}", url)))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
 
+    #[tokio::test]
+    async fn fetch_ok_returns_body() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/ok")
+            .with_status(200)
+            .with_body("hello")
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let body = fetch_with_retry(&client, &format!("{}/ok", server.url()))
+            .await
+            .unwrap();
+        assert_eq!(body, "hello");
+    }
+
+    #[tokio::test]
+    async fn fetch_redirection_returns_empty() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/redir")
+            .with_status(302)
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let body = fetch_with_retry(&client, &format!("{}/redir", server.url()))
+            .await
+            .unwrap();
+        assert_eq!(body, "");
+    }
+
+    #[tokio::test]
+    async fn fetch_forbidden_returns_empty() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/forbid")
+            .with_status(403)
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let body = fetch_with_retry(&client, &format!("{}/forbid", server.url()))
+            .await
+            .unwrap();
+        assert_eq!(body, "");
+    }
+
+    #[tokio::test]
+    async fn fetch_retries_then_errors() {
+        let mut server = Server::new_async().await;
+        // Three failures to exhaust retries
+        let _m1 = server
+            .mock("GET", "/fail")
+            .with_status(500)
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/fail")
+            .with_status(500)
+            .create_async()
+            .await;
+        let _m3 = server
+            .mock("GET", "/fail")
+            .with_status(500)
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let res = fetch_with_retry(&client, &format!("{}/fail", server.url())).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_with_headers_forwards_header() {
+        use mockito::Matcher;
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/hdr")
+            .match_header("x-test", Matcher::Exact("1".into()))
+            .with_status(200)
+            .with_body("ok")
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let mut hm = HeaderMap::new();
+        hm.insert(
+            reqwest::header::HeaderName::from_static("x-test"),
+            reqwest::header::HeaderValue::from_static("1"),
+        );
+        let body = fetch_with_retry_headers(&client, &format!("{}/hdr", server.url()), Some(hm))
+            .await
+            .unwrap();
+        assert_eq!(body, "ok");
+    }
+}

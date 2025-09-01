@@ -17,7 +17,6 @@ pub fn print_pretty_json(results: &[SearchResult]) {
     }
 }
 
-
 pub fn print_table_grouped(results: &[SearchResult]) {
     if results.is_empty() {
         println!("No results.");
@@ -35,4 +34,3 @@ pub fn print_table_grouped(results: &[SearchResult]) {
         println!("  - {} ({})", r.title, r.url);
     }
 }
-

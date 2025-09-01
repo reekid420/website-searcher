@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.79 as builder
+FROM rust:1.89 as builder
 WORKDIR /app
 COPY . .
+# Optionally run the full test suite during image build (enable with --build-arg RUN_TESTS=true)
+ARG RUN_TESTS=false
+RUN if [ "$RUN_TESTS" = "true" ]; then cargo test --all; fi
+# Build optimized binary
 RUN cargo build --release
 
 FROM debian:bookworm-slim

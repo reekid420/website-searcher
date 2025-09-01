@@ -78,4 +78,38 @@ cargo clippy
 cargo test
 ```
 
+### Tests
+
+- Unit tests cover:
+  - `src/query.rs`: normalization and search URL building for all SearchKind variants
+  - `src/parser.rs`: fallback anchor parsing, ElAmigos headings, FitGirl filters, relative/absolute URLs, href title derivation
+  - `src/fetcher.rs`: retry/backoff behavior, 200/302/403 handling, header forwarding
+  - `src/cf.rs`: FlareSolverr success/error JSON handling, header forwarding in payload
+  - `src/main.rs`: `normalize_title` cleanup, JSON traversal for gog-games AJAX fallbacks
+  - `src/config.rs`: site invariants (SearchKind, Cloudflare flags)
+
+- Integration tests (mocked FlareSolverr; no external network):
+  - `tests/cli_cf_mock.rs`: solver on by default; JSON and table output grouping
+  - `tests/cli_cookie_forwarding.rs`: `--cookie` forwarded in solver payload
+  - `tests/cli_dedup_and_limit.rs`: deduplication and per-site `--limit`
+  - `tests/cli_no_results_table.rs`: table output prints "No results." when empty
+  - `tests/integration_smoke.rs`: interactive empty input error; multi-site grouping; site filtering; unknown sites → empty JSON; `--debug` writes `debug/fitgirl_sample.html`; per-site limit across sites
+
+Run tests:
+```powershell
+cargo test
+# Single file
+cargo test --test integration_smoke
+# Show stdout/stderr for a test
+cargo test --test cli_dedup_and_limit -- --nocapture
+```
+
+Notes:
+- Tests mock FlareSolverr with `mockito` and override the endpoint via `--cf-url`; CF is enabled by default.
+- Some tests enable `--debug` and write sample HTML into `debug/`. Clean with:
+```powershell
+Remove-Item -Force -ErrorAction SilentlyContinue debug\*.html
+```
+- To avoid color codes in assertions, tests set `NO_COLOR=1`.
+
 
