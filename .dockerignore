@@ -9,6 +9,10 @@ debug
 coverage
 .dockerignore
 Dockerfile
+# Node/Playwright dev artifacts (not needed in Rust image)
+node_modules
+playwright-report
+test-results
 # General excludes
 **/*.md
 **/*.toml

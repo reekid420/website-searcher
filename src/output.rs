@@ -31,6 +31,7 @@ pub fn print_table_grouped(results: &[SearchResult]) {
             println!("{}:", r.site);
             current_site = Some(&r.site);
         }
-        println!("  - {} ({})", r.title, r.url);
+        let url = r.url.replace("/./", "/");
+        println!("  - {} ({})", r.title, url);
     }
 }

@@ -33,8 +33,6 @@ docker-compose.override.yml
 # Coverage (if generated locally)
 /coverage/
 
-# Todo2 - AI-powered task management directories
-.cursor/rules/todo2-overview.mdc
-.cursor/rules/todo2.mdc
-.cursor/mcp.json
-.todo2/
+compile.ps1
+node_modules
+package-lock.json

@@ -8,6 +8,48 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
         return Vec::new();
     }
 
+    // csrin phpBB search page: topics are anchors with class topictitle
+    if site.name.eq_ignore_ascii_case("csrin") && html.contains("search.php") {
+        let document = Html::parse_document(html);
+        if let Ok(sel) = Selector::parse("a.topictitle") {
+            let mut out = Vec::new();
+            for a in document.select(&sel) {
+                let href = a.value().attr("href").unwrap_or("");
+                if href.is_empty() {
+                    continue;
+                }
+                let mut url = href.to_string();
+                let is_http = url.starts_with("http://")
+                    || url.starts_with("https://")
+                    || url.starts_with("//");
+                if !is_http {
+                    let base = site.base_url.trim_end_matches('/');
+                    if url.starts_with('/') {
+                        url = format!("{}{}", base, url);
+                    } else {
+                        url = format!("{}/{}", base, url.trim_start_matches('/'));
+                    }
+                }
+                let mut title = a.text().collect::<String>().trim().to_string();
+                if title.is_empty() {
+                    if let Some(derived) = derive_title_from_href(&url) {
+                        title = derived;
+                    }
+                }
+                if !title.is_empty() {
+                    out.push(SearchResult {
+                        site: site.name.to_string(),
+                        title,
+                        url,
+                    });
+                }
+            }
+            if !out.is_empty() {
+                return out;
+            }
+        }
+    }
+
     // Site-specific parser for elamigos: titles are in the heading text, link text is "DOWNLOAD"
     if site.name.eq_ignore_ascii_case("elamigos") {
         return parse_elamigos(site, html, query);
@@ -26,7 +68,23 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
                     .and_then(|pel| pel.attr("href"))
             });
             let href = href_attr.unwrap_or("");
-            let url = href.to_string();
+            let mut url = href.to_string();
+            // Build absolute URL if relative
+            if !url.is_empty() {
+                let is_http = url.starts_with("http://")
+                    || url.starts_with("https://")
+                    || url.starts_with("//");
+                if !is_http {
+                    let base = site.base_url.trim_end_matches('/');
+                    if url.starts_with('/') {
+                        url = format!("{}{}", base, url);
+                    } else if url.starts_with('#') {
+                        url = format!("{}{}", site.base_url, url);
+                    } else {
+                        url = format!("{}/{}", base, url.trim_start_matches('/'));
+                    }
+                }
+            }
             if url.is_empty() {
                 continue;
             }
@@ -137,7 +195,7 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
             Some(SearchResult {
                 site: site.name.to_string(),
                 title,
-                url,
+                url: url.replace("/./", "/"),
             })
         })
         .collect()
@@ -303,6 +361,28 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.to_lowercase(), "cyberpunk 2077");
         assert!(results[0].url.ends_with("/cyberpunk-2077"));
+    }
+
+    #[test]
+    fn primary_relative_href_becomes_absolute() {
+        let cfg = SiteConfig {
+            name: "example",
+            base_url: "https://example.com/",
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("s"),
+            listing_path: None,
+            result_selector: "a.topictitle", // simulate csrin selector
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <a class="topictitle" href="viewtopic.php?t=12345">Elden Ring</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/viewtopic.php?t=12345");
     }
 
     #[test]

@@ -16,6 +16,7 @@ services:
     container_name: website-searcher-app
     environment:
       - CF_URL=http://flaresolverr:8191/v1
+      - CSRIN_PAGES=2
     depends_on:
       - flaresolverr
     stdin_open: true
@@ -33,3 +34,19 @@ services:
       - RUST_BACKTRACE=1
     # CF_URL not required for tests (mocked)
     entrypoint: ["cargo", "test", "--all", "--locked", "--verbose"]
+
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.46.1-jammy
+    container_name: website-searcher-playwright
+    platform: linux/amd64
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    environment:
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0
+      - CSRIN_PAGES=2
+    # Example interactive run:
+    # docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.js 'elden ring'"
+    # Or run the Rust app with Playwright path:
+    # docker compose run --rm playwright bash -lc "npm i -D playwright && cargo build --release --locked && CSRIN_PAGES=2 target/release/website-searcher 'elden ring' --sites csrin --format table --debug --csrin-playwright --no-cf"

@@ -49,6 +49,23 @@ jobs:
           RUST_BACKTRACE: 1
           NO_COLOR: 1
         run: cargo test --all --verbose --locked
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright deps
+        run: |
+          npm ci || npm i -D playwright
+          npx playwright install --with-deps
+
+      - name: Playwright smoke (csrin)
+        env:
+          CSRIN_PAGES: 1
+        run: |
+          cargo build --release --locked
+          .${{ runner.os == 'Windows' && '\\' || '/' }}target${{ runner.os == 'Windows' && '\\release\\' || '/release/' }}website-searcher${{ runner.os == 'Windows' && '.exe' || '' }} "elden ring" --sites csrin --format table --debug --csrin-playwright --no-cf
  
       - name: install audit
         run: cargo install cargo-audit

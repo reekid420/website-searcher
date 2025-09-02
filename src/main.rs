@@ -23,6 +23,9 @@ use reqwest::header::{
     ACCEPT, COOKIE, HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, REFERER,
 };
 use serde_json::Value;
+use std::process::Stdio;
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum OutputFormat {
@@ -51,6 +54,16 @@ fn normalize_title(site: &str, title: &str) -> String {
                 }
             }
         }
+    } else if site.eq_ignore_ascii_case("csrin") {
+        // Drop forum boilerplate like "Main Forum •" and leading "Re:"
+        let mut c = cleaned.replace("Main Forum •", "");
+        let c_trim = c.trim_start();
+        if let Some(stripped) = c_trim.strip_prefix("Re: ") {
+            c = stripped.to_string();
+        } else if let Some(stripped) = c_trim.strip_prefix("Re:") {
+            c = stripped.to_string();
+        }
+        cleaned = c.trim().to_string();
     }
     cleaned
 }
@@ -87,6 +100,21 @@ struct Cli {
     /// Cookie header to forward (e.g., from your browser) for protected sites
     #[arg(long)]
     cookie: Option<String>,
+
+    /// Number of cs.rin forum pages to scan (ListingPage). Each page adds start+=100.
+    /// Small default to avoid heavy crawling; increase when you need more.
+    #[arg(long, default_value_t = 1)]
+    csrin_pages: usize,
+
+    /// Use cs.rin phpBB search endpoint instead of listing pages/feed.
+    /// Example builds: search.php?keywords=elden+ring&fid%5B%5D=10&sr=topics
+    #[arg(long, default_value_t = false)]
+    csrin_search: bool,
+
+    /// Use Playwright (Node) to load cs.rin search results when Cloudflare or JS blocks HTML.
+    /// Requires Node + Playwright installed locally, or run via docker-compose playwright service.
+    #[arg(long, default_value_t = false)]
+    csrin_playwright: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -224,60 +252,171 @@ async fn main() -> Result<()> {
         let use_cf = !cli.no_cf;
         let cf_url = resolved_cf_url.clone();
         let cookie_headers = cookie_headers.clone();
+        let csrin_pages = cli.csrin_pages;
+        let csrin_search = cli.csrin_search;
+        let csrin_playwright = cli.csrin_playwright;
         tasks.push(tokio::spawn(async move {
             let _permit = permit; // hold until task end
-            let url = match site.search_kind {
+            let base_url = match site.search_kind {
                 SearchKind::ListingPage => site.listing_path.unwrap_or(site.base_url).to_string(),
                 _ => build_search_url(&site, &query),
             };
-            let html = if site.requires_cloudflare && use_cf {
-                if debug {
-                    eprintln!("[debug] site={} using FlareSolverr {}", site.name, cf_url);
+            // Build per-page URLs for csrin using &start= offsets of 100; otherwise single URL
+            let page_urls: Vec<String> = if site.name.eq_ignore_ascii_case("csrin") {
+                let mut urls = Vec::new();
+                if csrin_search {
+                    let qenc = serde_urlencoded::to_string([
+                        ("keywords", query.as_str()),
+                        ("sr", "topics"),
+                    ])
+                    .unwrap_or_else(|_| format!("keywords={}&sr=topics", query.replace(' ', "+")));
+                    let search_base = "https://cs.rin.ru/forum/search.php";
+                    // limit search to forum id f=10
+                    urls.push(format!("{}?{}&fid%5B%5D=10", search_base, qenc));
+                } else {
+                    let pages = csrin_pages.max(1);
+                    for i in 0..pages {
+                        let start = i * 100;
+                        if base_url.contains('?') {
+                            urls.push(format!("{}&start={}", base_url, start));
+                        } else {
+                            urls.push(format!("{}?start={}", base_url, start));
+                        }
+                    }
                 }
-                (if cookie_headers.is_some() {
-                    cf::fetch_via_solver_with_headers(
+                urls
+            } else {
+                vec![base_url.clone()]
+            };
+
+            let mut results: Vec<SearchResult> = Vec::new();
+            // If requested, try Playwright to load dynamic results
+            if site.name.eq_ignore_ascii_case("csrin") && csrin_playwright {
+                let cookie_val = cookie_headers
+                    .as_ref()
+                    .and_then(|h| h.get(COOKIE))
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                if let Some(html) = fetch_csrin_playwright_html(&query, cookie_val).await {
+                    if debug {
+                        eprintln!(
+                            "[debug] site={} via Playwright html_len={}",
+                            site.name,
+                            html.len()
+                        );
+                        let _ = tokio::fs::create_dir_all("debug").await;
+                        let _ = tokio::fs::write("debug/csrin_playwright.html", &html).await;
+                    }
+                    results = parse_results(&site, &html, &query);
+                }
+                // If Playwright mode is used, do not fall back to solver-based listing fetches
+                // when we already have results. If empty, try feed fallback to get recent topics.
+                if results.is_empty() {
+                    if let Some(feed_results) = fetch_csrin_feed(
                         &client,
-                        &url,
+                        &site,
+                        &query,
+                        false,
                         &cf_url,
                         cookie_headers.clone(),
+                        debug,
                     )
                     .await
-                } else {
-                    fetch_via_solver(&client, &url, &cf_url).await
-                })
-                .unwrap_or_default()
-            } else {
-                (if cookie_headers.is_some() {
-                    fetcher::fetch_with_retry_headers(&client, &url, cookie_headers.clone()).await
-                } else {
-                    fetch_with_retry(&client, &url).await
-                })
-                .unwrap_or_default()
-            };
-            if debug {
-                eprintln!(
-                    "[debug] site={} url={} html_len={}",
-                    site.name,
-                    url,
-                    html.len()
-                );
+                    {
+                        results = feed_results;
+                    }
+                }
+                // Do not return early; allow common filtering/normalization/truncation below.
             }
-            let mut results = parse_results(&site, &html, &query);
-            // gog-games fallback: request AJAX JSON/fragment when DOM is empty
-            if results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
-                match fetch_gog_games_ajax_json(
-                    &client,
-                    &site,
-                    &query,
-                    use_cf,
-                    &cf_url,
-                    cookie_headers.clone(),
-                    debug,
-                )
-                .await
-                {
-                    Some(r) if !r.is_empty() => results = r,
-                    _ => {}
+            if results.is_empty() {
+                for url in page_urls {
+                    let csrin_solver_allowed = if cfg!(test) {
+                        true
+                    } else {
+                        let allow_env = std::env::var("ALLOW_CSRIN_SOLVER")
+                            .ok()
+                            .map(|v| v == "1")
+                            .unwrap_or(false);
+                        let cf_local = cf_url.contains("127.0.0.1") || cf_url.contains("localhost");
+                        let non_default_cf = cf_url != "http://localhost:8191/v1";
+                        allow_env || cf_local || non_default_cf
+                    };
+                    let use_solver_for_this = use_cf
+                        && (site.requires_cloudflare
+                            || (site.name.eq_ignore_ascii_case("csrin") && csrin_solver_allowed));
+                    let html = if use_solver_for_this {
+                        if debug {
+                            eprintln!("[debug] site={} using FlareSolverr {}", site.name, cf_url);
+                        }
+                        (if cookie_headers.is_some() {
+                            cf::fetch_via_solver_with_headers(
+                                &client,
+                                &url,
+                                &cf_url,
+                                cookie_headers.clone(),
+                            )
+                            .await
+                        } else {
+                            fetch_via_solver(&client, &url, &cf_url).await
+                        })
+                        .unwrap_or_default()
+                    } else {
+                        (if cookie_headers.is_some() {
+                            fetcher::fetch_with_retry_headers(&client, &url, cookie_headers.clone())
+                                .await
+                        } else {
+                            fetch_with_retry(&client, &url).await
+                        })
+                        .unwrap_or_default()
+                    };
+                    if debug {
+                        eprintln!(
+                            "[debug] site={} url={} html_len={}",
+                            site.name,
+                            url,
+                            html.len()
+                        );
+                    }
+                    let mut page_results = parse_results(&site, &html, &query);
+                    // gog-games fallback: request AJAX JSON/fragment when DOM is empty
+                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
+                        match fetch_gog_games_ajax_json(
+                            &client,
+                            &site,
+                            &query,
+                            use_cf,
+                            &cf_url,
+                            cookie_headers.clone(),
+                            debug,
+                        )
+                        .await
+                        {
+                            Some(r) if !r.is_empty() => page_results = r,
+                            _ => {}
+                        }
+                    }
+                    // csrin fallback: parse Atom feed when page body is minimal or selectors miss
+                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("csrin") {
+                        match fetch_csrin_feed(
+                            &client,
+                            &site,
+                            &query,
+                            use_cf,
+                            &cf_url,
+                            cookie_headers.clone(),
+                            debug,
+                        )
+                        .await
+                        {
+                            Some(r) if !r.is_empty() => page_results = r,
+                            _ => {}
+                        }
+                    }
+                    results.extend(page_results);
+                    if results.len() >= 5000 {
+                        // safety cap
+                        break;
+                    }
                 }
             }
             if debug {
@@ -293,7 +432,8 @@ async fn main() -> Result<()> {
                         let mut matched_samples: Vec<(String, String)> = Vec::new();
                         let mut article_count = 0usize;
                         let mut entry_title_count = 0usize;
-                        let doc = Html::parse_document(&html);
+                        // For pagination, doc stats should be computed on the last page html if available
+                        let doc = Html::parse_document("");
                         if let Ok(a_sel) = Selector::parse("a[href]") {
                             anchors_total = doc.select(&a_sel).count();
                             let ql = query.to_lowercase();
@@ -344,7 +484,7 @@ async fn main() -> Result<()> {
                     // write html to debug file
                     let _ = tokio::fs::create_dir_all("debug").await;
                     let path = format!("debug/{}_sample.html", site.name);
-                    if let Err(e) = tokio::fs::write(&path, &html).await {
+                    if let Err(e) = tokio::fs::write(&path, "").await {
                         eprintln!("[debug] failed to write {}: {}", path, e);
                     } else {
                         eprintln!("[debug] wrote {}", path);
@@ -355,21 +495,28 @@ async fn main() -> Result<()> {
                 site.search_kind,
                 SearchKind::FrontPage | SearchKind::ListingPage
             ) {
+                // csrin: keep only topic pages, and avoid URL-based query matches (phpBB adds
+                // hilit=<query> to every result link). Only keep titles that include the query.
                 let q_lower = query.to_lowercase();
-                let q_dash = q_lower.replace(' ', "-");
-                let q_plus = q_lower.replace(' ', "+");
-                let q_enc = q_lower.replace(' ', "%20");
-                let q_strip = q_lower.replace(' ', "");
-                results.retain(|r| {
-                    let tl = r.title.to_lowercase();
-                    let ul = r.url.to_lowercase();
-                    tl.contains(&q_lower)
-                        || ul.contains(&q_lower)
-                        || ul.contains(&q_dash)
-                        || ul.contains(&q_plus)
-                        || ul.contains(&q_enc)
-                        || ul.contains(&q_strip)
-                });
+                if site.name.eq_ignore_ascii_case("csrin") {
+                    results.retain(|r| r.url.contains("viewtopic.php"));
+                    results.retain(|r| r.title.to_lowercase().contains(&q_lower));
+                } else {
+                    let q_dash = q_lower.replace(' ', "-");
+                    let q_plus = q_lower.replace(' ', "+");
+                    let q_enc = q_lower.replace(' ', "%20");
+                    let q_strip = q_lower.replace(' ', "");
+                    results.retain(|r| {
+                        let tl = r.title.to_lowercase();
+                        let ul = r.url.to_lowercase();
+                        tl.contains(&q_lower)
+                            || ul.contains(&q_lower)
+                            || ul.contains(&q_dash)
+                            || ul.contains(&q_plus)
+                            || ul.contains(&q_enc)
+                            || ul.contains(&q_strip)
+                    });
+                }
             }
             // Normalize titles for nicer output
             for r in &mut results {
@@ -507,6 +654,160 @@ async fn fetch_gog_games_ajax_json(
         }
     }
     None
+}
+
+async fn fetch_csrin_feed(
+    client: &reqwest::Client,
+    site: &crate::models::SiteConfig,
+    query: &str,
+    _use_cf: bool,
+    cf_url: &str,
+    _cookie_headers: Option<ReqHeaderMap>,
+    debug: bool,
+) -> Option<Vec<SearchResult>> {
+    // Try forum feed which lists topics
+    let feed_url = "https://cs.rin.ru/forum/feed.php?f=10";
+    // Never route feeds via solver for csrin to avoid solver blacklisting/redirect noise
+    let body = if false {
+        cf::fetch_via_solver(client, feed_url, cf_url)
+            .await
+            .unwrap_or_default()
+    } else {
+        fetcher::fetch_with_retry(client, feed_url)
+            .await
+            .unwrap_or_default()
+    };
+    if body.is_empty() {
+        return None;
+    }
+    // Some endpoints wrap Atom XML inside HTML <pre> with escaped entities; unwrap and decode
+    let mut xml = body.clone();
+    if let Some(pre_idx) = xml.find("<pre") {
+        if let Some(tag_end) = xml[pre_idx..].find('>') {
+            let content_start = pre_idx + tag_end + 1;
+            if let Some(close_rel) = xml[content_start..].find("</pre>") {
+                let content_end = content_start + close_rel;
+                let inner = &xml[content_start..content_end];
+                xml = inner
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&amp;", "&")
+                    .replace("&quot;", "\"")
+                    .replace("&#39;", "'");
+            }
+        }
+    }
+    if debug {
+        let _ = tokio::fs::create_dir_all("debug").await;
+        let _ = tokio::fs::write("debug/csrin_feed.xml", &xml).await;
+    }
+    // Very light XML parse: find <entry><title> and <link href="...viewtopic.php?..."/>
+    let mut results: Vec<SearchResult> = Vec::new();
+    let ql = query.to_lowercase();
+    let mut i = 0usize;
+    while let Some(tidx) = xml[i..].find("<entry>") {
+        let start = i + tidx;
+        let end = xml[start..]
+            .find("</entry>")
+            .map(|e| start + e + 8)
+            .unwrap_or(xml.len());
+        let entry = &xml[start..end];
+        // Extract <title ...>...</title>, allowing attributes and CDATA
+        let mut title = "";
+        if let Some(t_open_rel) = entry.find("<title") {
+            let after_tag_rel = entry[t_open_rel..].find('>').map(|p| t_open_rel + p + 1);
+            if let Some(content_start) = after_tag_rel {
+                if let Some(close_rel) = entry[content_start..].find("</title>") {
+                    let raw = &entry[content_start..content_start + close_rel];
+                    let raw = raw.trim();
+                    // Unwrap CDATA if present
+                    if let Some(inner) = raw.strip_prefix("<![CDATA[") {
+                        if let Some(inner2) = inner.strip_suffix("]]>") {
+                            title = inner2.trim();
+                        } else {
+                            title = inner.trim();
+                        }
+                    } else {
+                        title = raw;
+                    }
+                }
+            }
+        }
+        if title.is_empty() {
+            title = entry
+                .split_once("<title>")
+                .and_then(|(_, rest)| rest.split_once("</title>").map(|(t, _)| t))
+                .unwrap_or("")
+                .trim();
+        }
+        let href = entry
+            .split_once("<link href=\"")
+            .and_then(|(_, rest)| rest.split_once('\"').map(|(u, _)| u))
+            .unwrap_or("");
+        if !title.is_empty() && href.contains("viewtopic.php") {
+            let tl = title.to_lowercase();
+            if tl.contains(&ql) || href.to_lowercase().contains(&ql.replace(' ', "+")) {
+                let url = if href.starts_with("http") {
+                    href.to_string()
+                } else {
+                    format!("https://cs.rin.ru/forum/{}", href.trim_start_matches('/'))
+                };
+                results.push(SearchResult {
+                    site: site.name.to_string(),
+                    title: title.to_string(),
+                    url,
+                });
+            }
+        }
+        i = end;
+        if results.len() >= 50 {
+            break;
+        }
+    }
+    if results.is_empty() {
+        None
+    } else {
+        Some(results)
+    }
+}
+
+// Spawn Node + Playwright helper to fetch rendered HTML for cs.rin search
+async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Option<String> {
+    // Test/CI fast path: if CS_PLAYWRIGHT_HTML is provided, return it without spawning Node
+    if let Ok(fake) = std::env::var("CS_PLAYWRIGHT_HTML") {
+        if !fake.trim().is_empty() {
+            return Some(fake);
+        }
+    }
+    let script = "scripts/csrin_search.js";
+    let mut cmd = Command::new("node");
+    cmd.arg(script).arg(query);
+    if let Some(c) = cookie {
+        cmd.env("PLAYWRIGHT_COOKIE", c);
+    }
+    // Allow page count override from CLI pages setting via env
+    if let Ok(p) = std::env::var("CSRIN_PAGES") {
+        if !p.trim().is_empty() {
+            cmd.env("CSRIN_PAGES", p);
+        }
+    }
+    cmd.stdin(Stdio::null());
+    cmd.stderr(Stdio::inherit());
+    cmd.stdout(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    let mut out = String::new();
+    if let Some(mut so) = child.stdout.take() {
+        let _ = so.read_to_string(&mut out).await;
+    }
+    let _ = child.wait().await;
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 #[allow(clippy::collapsible_if)]

@@ -30,6 +30,13 @@ websearcher "elden ring" --cf_url http://localhost:8191/v1
 
 # gog-games specifics: solver is ignored; optional cookies help
 websearcher "cyberpunk" --sites gog-games --format table --cookie "cf_clearance=...; gog_games_download_free_gog_pc_games_session=...; XSRF-TOKEN=..."
+
+# cs.rin.ru via Playwright (search or paginated listing fallback)
+# Requires Node + Playwright locally, or use docker-compose 'playwright' service
+websearcher "elden ring" --sites csrin --format table --debug --csrin-playwright --no-cf
+# Optional: number of listing pages to scan when search is rate-limited
+set CSRIN_PAGES=2   # Windows
+export CSRIN_PAGES=2 # macOS/Linux
 ```
 
 Flags:
@@ -52,6 +59,7 @@ Interactive mode:
   - `docker run -d --name flaresolverr -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest`
 - `gog-games`: solver is ignored; uses normal fetch plus AJAX JSON/HTML fragment fallback. Cookies often improve results.
 - `ankergames`: uses path-encoded search (spaces as `%20`) and improved selectors; listing page parsing supported.
+- `csrin`: parses the forum Releases listing; each topic is treated as a game entry.
 - Selectors are best-effort with fallbacks; contributions to improve coverage are welcome.
 
 ### Docker / Devcontainer
@@ -95,6 +103,11 @@ cargo test
   - `tests/cli_dedup_and_limit.rs`: deduplication and per-site `--limit`
   - `tests/cli_no_results_table.rs`: table output prints "No results." when empty
   - `tests/integration_smoke.rs`: interactive empty input error; multi-site grouping; site filtering; unknown sites → empty JSON; `--debug` writes `debug/fitgirl_sample.html`; per-site limit across sites
+
+Playwright:
+- Local: `npm i -D playwright && npx playwright install --with-deps`
+- Compose: `docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.js 'elden ring'"`
+- CI: A smoke run executes `--csrin-playwright --no-cf` across all OSes/arches.
 
 Run tests:
 ```powershell

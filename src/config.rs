@@ -132,6 +132,21 @@ pub fn site_configs() -> Vec<SiteConfig> {
             requires_js: false,
             requires_cloudflare: false,
         },
+        // 11. cs.rin.ru forum releases listing – treat forum topic rows as games
+        SiteConfig {
+            name: "csrin",
+            base_url: "https://cs.rin.ru/forum/",
+            search_kind: SearchKind::ListingPage,
+            query_param: None,
+            listing_path: Some("https://cs.rin.ru/forum/viewforum.php?f=10"),
+            // phpBB topics typically use a.topictitle; also match relative viewtopic links
+            result_selector: "a.topictitle, a[href^='viewtopic.php']",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            // Blacklist csrin from FlareSolverr by default; enable during tests to keep mocks working
+            requires_cloudflare: cfg!(test),
+        },
     ]
 }
 

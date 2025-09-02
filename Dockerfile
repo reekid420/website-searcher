@@ -20,6 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 RUN useradd -r -u 10001 -g users appuser
 WORKDIR /app
 COPY --from=builder /app/target/release/website-searcher /usr/local/bin/websearcher
+# Note: Playwright is not bundled in this image to keep it small and secure.
+# Use docker-compose 'playwright' service or run locally with Node installed
+# when using --csrin-playwright.
 ENV RUST_LOG=info
 # Default CF URL (can be overridden)
 ENV CF_URL=http://localhost:8191/v1
