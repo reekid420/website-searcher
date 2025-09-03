@@ -10,7 +10,11 @@ const { chromium } = require('playwright');
 		console.error('Missing query');
 		process.exit(2);
 	}
-	const browser = await chromium.launch({ headless: true });
+	const browser = await chromium.launch({ headless: true, args: [
+		"--disable-gpu",
+		"--disable-dev-shm-usage",
+		"--no-sandbox",
+	] });
 	const context = await browser.newContext({
 		userAgent:
 			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -28,22 +32,30 @@ const { chromium } = require('playwright');
 		}
 	}
 	const page = await context.newPage();
-	const pagesToScan = Math.max(1, Math.min(parseInt(process.env.CSRIN_PAGES || '2', 10) || 2, 10));
+	await page.route('**/*', async route => {
+		const rt = route.request().resourceType();
+		if (["image", "stylesheet", "font", "media", "other"].includes(rt)) {
+			return route.abort();
+		}
+		return route.continue();
+	});
+	page.setDefaultTimeout(12000);
+	page.setDefaultNavigationTimeout(12000);
+	const pagesToScan = Math.max(1, Math.min(parseInt(process.env.CSRIN_PAGES || '1', 10) || 1, 5));
 	let haveResults = false;
 
 	// Primary path: use the search form to establish a valid session and search context
 	try {
-		await page.goto('https://cs.rin.ru/forum/search.php', { waitUntil: 'domcontentloaded', timeout: 45000 });
+		await page.goto('https://cs.rin.ru/forum/search.php', { waitUntil: 'domcontentloaded', timeout: 15000 });
 		// Close donation overlay if present
-		try { await page.click('#overlayconfirmbtn', { timeout: 1500 }); } catch {}
+		try { await page.click('#overlayconfirmbtn', { timeout: 1000 }); } catch {}
 		await page.fill('input[name="keywords"]', query);
 		await page.selectOption('select[name="sr"]', { value: 'topics' });
 		await page.check('input[name="fid[]"][value="10"]');
 		await Promise.all([
-			page.waitForLoadState('networkidle'),
 			page.click('input[name="submit"]'),
+			page.waitForLoadState('domcontentloaded'),
 		]);
-		await page.waitForLoadState('domcontentloaded');
 		// Detect rate limiting or missing results
 		const infoText = await page.textContent('table.tablebg td.row1 .gen').catch(() => null);
 		haveResults = !!(await page.$('a.topictitle').catch(() => null)) && !(infoText && infoText.includes('cannot use search at this time'));
@@ -62,8 +74,8 @@ const { chromium } = require('playwright');
 			params.set('sr', 'topics');
 			params.append('fid[]', '10');
 			const url = `https://cs.rin.ru/forum/search.php?${params.toString()}`;
-			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-			try { await page.waitForSelector('a.topictitle', { timeout: 5000 }); } catch {}
+			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+			try { await page.waitForSelector('a.topictitle', { timeout: 4000 }); } catch {}
 			const infoText = await page.textContent('table.tablebg td.row1 .gen').catch(() => null);
 			haveResults = !!(await page.$('a.topictitle').catch(() => null)) && !(infoText && infoText.includes('cannot use search at this time'));
 			if (haveResults) {
@@ -78,8 +90,8 @@ const { chromium } = require('playwright');
 		let combined = '';
 		for (let i = 0; i < pagesToScan; i++) {
 			const url = `https://cs.rin.ru/forum/viewforum.php?f=10&start=${i * 100}`;
-			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-			try { await page.waitForSelector('a.topictitle', { timeout: 5000 }); } catch {}
+			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 12000 });
+			try { await page.waitForSelector('a.topictitle', { timeout: 1500 }); } catch {}
 			combined += await page.content();
 		}
 		console.log(combined);

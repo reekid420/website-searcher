@@ -50,6 +50,7 @@ async fn multi_site_table_grouping() {
     ]);
     cmd.env("NO_COLOR", "1");
 
+    cmd.env("NO_TABLE", "1");
     let assert = cmd.assert().success();
     let out = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
     assert!(out.contains("fitgirl:"));

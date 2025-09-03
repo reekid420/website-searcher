@@ -97,6 +97,12 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
                 } else {
                     continue;
                 }
+            } else if site.name.eq_ignore_ascii_case("steamrip") {
+                if let Some(clean) = filter_and_normalize_steamrip(&url, &title) {
+                    title = clean;
+                } else {
+                    continue;
+                }
             }
             if !title.is_empty() {
                 primary.push(SearchResult {
@@ -116,12 +122,18 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
             primary.retain(|r| {
                 let tl = r.title.to_lowercase();
                 let ul = r.url.to_lowercase();
-                tl.contains(&ql)
+                let basic = tl.contains(&ql)
                     || ul.contains(&ql)
                     || ul.contains(&ql_dash)
                     || ul.contains(&ql_plus)
                     || ul.contains(&ql_encoded)
-                    || ul.contains(&ql_stripped)
+                    || ul.contains(&ql_stripped);
+                if site.name.eq_ignore_ascii_case("gog-games") {
+                    // Tighten for gog-games: require a game-like path
+                    basic && (ul.contains("/game/") || ul.contains("/games/"))
+                } else {
+                    basic
+                }
             });
             if !primary.is_empty() {
                 return primary;
@@ -190,6 +202,12 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
                 } else {
                     return None;
                 }
+            } else if site.name.eq_ignore_ascii_case("steamrip") {
+                if let Some(clean) = filter_and_normalize_steamrip(&url, &title) {
+                    title = clean;
+                } else {
+                    return None;
+                }
             }
 
             Some(SearchResult {
@@ -246,6 +264,14 @@ fn filter_and_normalize_fitgirl(url: &str, title: &str) -> Option<String> {
     if url.contains("/page/") || url.contains("#respond") || url.contains("?s=") {
         return None;
     }
+    // Drop tag/category/archive and inquiry pages
+    let url_l = url.to_lowercase();
+    if url_l.contains("/tag/") || url_l.contains("/category/") || url_l.contains("/categories/") {
+        return None;
+    }
+    if url_l.contains("/inquiry") || url_l.contains("/inquery") {
+        return None;
+    }
     let t = title.trim();
     if t.is_empty() {
         return None;
@@ -262,6 +288,25 @@ fn filter_and_normalize_fitgirl(url: &str, title: &str) -> Option<String> {
 
     // Drop "Continue reading ..." teaser links (we keep the main post link instead)
     if t.to_lowercase().starts_with("continue reading") {
+        return None;
+    }
+    Some(t.to_string())
+}
+
+fn filter_and_normalize_steamrip(url: &str, title: &str) -> Option<String> {
+    // Drop obvious pagination and search navigational links
+    if url.contains("/page/") || url.contains("?s=") {
+        return None;
+    }
+    let t = title.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let tl = t.to_lowercase();
+    if tl == "next" || tl == "previous" || tl.starts_with("next") || tl.starts_with("prev") {
+        return None;
+    }
+    if t.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
     Some(t.to_string())

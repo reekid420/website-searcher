@@ -25,6 +25,7 @@ async fn cli_with_cf_mock_produces_results() {
     ]);
     // Avoid colored output ambiguity
     cmd.env("NO_COLOR", "1");
+    cmd.env("NO_TABLE", "1");
 
     let assert = cmd.assert().success();
     let out = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
@@ -55,6 +56,7 @@ async fn cli_table_format_groups_by_site() {
         "table",
     ]);
     cmd.env("NO_COLOR", "1");
+    cmd.env("NO_TABLE", "1");
 
     let assert = cmd.assert().success();
     let out = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
@@ -86,6 +88,7 @@ async fn cli_csrin_listing_via_solver() {
         "table",
     ]);
     cmd.env("NO_COLOR", "1");
+    cmd.env("NO_TABLE", "1");
 
     let assert = cmd.assert().success();
     let out = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");

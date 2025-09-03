@@ -16,6 +16,13 @@ anyhow = "1.0"
 thiserror = "2.0.16"
 urlencoding = "2.1"
 serde_urlencoded = "0.7"
+inquire = { version = "0.6", default-features = true }
+atty = "0.2"
+tabled = "0.14"
+textwrap = "0.16"
+terminal_size = "0.3"
+ratatui = { version = "0.27", default-features = false, features = ["crossterm"] }
+crossterm = "0.27"
 
 [dev-dependencies]
 assert_cmd = "2.0"

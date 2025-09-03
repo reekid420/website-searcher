@@ -15,14 +15,21 @@ mod query;
 
 use cf::fetch_via_solver;
 use config::site_configs;
+use crossterm::event::KeyEventKind;
+use crossterm::{event, execute, terminal};
 use fetcher::{build_http_client, fetch_with_retry};
 use models::{SearchKind, SearchResult};
 use parser::parse_results;
 use query::{build_search_url, normalize_query};
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+};
 use reqwest::header::{
     ACCEPT, COOKIE, HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, REFERER,
 };
 use serde_json::Value;
+use std::io::stdout;
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -111,10 +118,9 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     csrin_search: bool,
 
-    /// Use Playwright (Node) to load cs.rin search results when Cloudflare or JS blocks HTML.
-    /// Requires Node + Playwright installed locally, or run via docker-compose playwright service.
+    /// Disable Playwright fallback for cs.rin.ru (forces non-PW backups only)
     #[arg(long, default_value_t = false)]
-    csrin_playwright: bool,
+    no_playwright: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -126,16 +132,27 @@ async fn main() -> Result<()> {
         Some(q) => q.clone(),
         None => {
             println!("Website Searcher (interactive)\n");
-            use std::io::{self, Write};
-            print!("Search phrase: ");
-            let _ = io::stdout().flush();
-            let mut line = String::new();
-            io::stdin().read_line(&mut line)?;
-            let s = line.trim().to_string();
-            if s.is_empty() {
-                anyhow::bail!("empty search phrase");
+            // Prefer TUI prompt when attached to a TTY; fall back to stdin prompt otherwise
+            if atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout) {
+                let ans = inquire::Text::new("Search phrase:")
+                    .with_placeholder("e.g., elden ring")
+                    .prompt();
+                match ans {
+                    Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+                    _ => anyhow::bail!("empty search phrase"),
+                }
+            } else {
+                use std::io::{self, Write};
+                print!("Search phrase: ");
+                let _ = io::stdout().flush();
+                let mut line = String::new();
+                io::stdin().read_line(&mut line)?;
+                let s = line.trim().to_string();
+                if s.is_empty() {
+                    anyhow::bail!("empty search phrase");
+                }
+                s
             }
-            s
         }
     };
     let normalized = normalize_query(&query_value);
@@ -156,25 +173,59 @@ async fn main() -> Result<()> {
 
     // Interactive site selection only when no --sites provided and interactive mode
     let interactive_selection: Option<Vec<String>> = if cli.sites.is_none() && cli.query.is_none() {
-        use std::io::{self, Write};
-        println!("\nAvailable sites:");
-        for (i, s) in all_sites.iter().enumerate() {
-            println!("  {}. {}", i + 1, s.name);
-        }
-        print!("\nSelect sites (names or numbers, space-separated). Press Enter for ALL: ");
-        let _ = io::stdout().flush();
-        let mut line = String::new();
-        io::stdin().read_line(&mut line)?;
-        let raw = line.trim();
-        if raw.is_empty() || raw.eq_ignore_ascii_case("all") {
-            None
+        if atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout) {
+            // First ask if the user wants to search ALL sites (faster flow)
+            match inquire::Confirm::new("Search all sites?")
+                .with_default(true)
+                .with_help_message("Choose 'No' to pick specific sites")
+                .prompt()
+            {
+                Ok(true) => None,
+                Ok(false) => {
+                    let site_names: Vec<&str> = all_sites.iter().map(|s| s.name).collect();
+                    // Multi-select with all preselected so you can quickly uncheck a few
+                    match inquire::MultiSelect::new(
+                        "Select sites (Space toggles, Enter confirms):",
+                        site_names.clone(),
+                    )
+                    .with_default(&[])
+                    .with_help_message("Use ↑/↓ to navigate, Space to toggle, Enter to confirm")
+                    .with_page_size(12)
+                    .prompt()
+                    {
+                        Ok(selected) => {
+                            if selected.is_empty() {
+                                None
+                            } else {
+                                Some(selected.into_iter().map(|s| s.to_string()).collect())
+                            }
+                        }
+                        Err(_) => None,
+                    }
+                }
+                Err(_) => None,
+            }
         } else {
-            let tokens: Vec<String> = raw
-                .split_whitespace()
-                .map(|t| t.trim().to_string())
-                .filter(|t| !t.is_empty())
-                .collect();
-            Some(tokens)
+            use std::io::{self, Write};
+            println!("\nAvailable sites:");
+            for (i, s) in all_sites.iter().enumerate() {
+                println!("  {}. {}", i + 1, s.name);
+            }
+            print!("\nSelect sites (names or numbers, space-separated). Press Enter for ALL: ");
+            let _ = io::stdout().flush();
+            let mut line = String::new();
+            io::stdin().read_line(&mut line)?;
+            let raw = line.trim();
+            if raw.is_empty() || raw.eq_ignore_ascii_case("all") {
+                None
+            } else {
+                let tokens: Vec<String> = raw
+                    .split_whitespace()
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect();
+                Some(tokens)
+            }
         }
     } else {
         None
@@ -254,7 +305,7 @@ async fn main() -> Result<()> {
         let cookie_headers = cookie_headers.clone();
         let csrin_pages = cli.csrin_pages;
         let csrin_search = cli.csrin_search;
-        let csrin_playwright = cli.csrin_playwright;
+        let no_playwright = cli.no_playwright;
         tasks.push(tokio::spawn(async move {
             let _permit = permit; // hold until task end
             let base_url = match site.search_kind {
@@ -275,7 +326,10 @@ async fn main() -> Result<()> {
                     urls.push(format!("{}?{}&fid%5B%5D=10", search_base, qenc));
                 } else {
                     let pages = csrin_pages.max(1);
-                    for i in 0..pages {
+                    // First page uses base URL with no start parameter
+                    urls.push(base_url.clone());
+                    // Subsequent pages start at 100, 200, ...
+                    for i in 1..pages {
                         let start = i * 100;
                         if base_url.contains('?') {
                             urls.push(format!("{}&start={}", base_url, start));
@@ -290,8 +344,11 @@ async fn main() -> Result<()> {
             };
 
             let mut results: Vec<SearchResult> = Vec::new();
-            // If requested, try Playwright to load dynamic results
-            if site.name.eq_ignore_ascii_case("csrin") && csrin_playwright {
+            // If requested, try Playwright to load dynamic results (skip when solver is explicitly configured/local)
+            let cf_local = cf_url.contains("127.0.0.1") || cf_url.contains("localhost");
+            let non_default_cf = cf_url != "http://localhost:8191/v1";
+            let prefer_solver = use_cf && (cf_local || non_default_cf);
+            if site.name.eq_ignore_ascii_case("csrin") && !no_playwright && !prefer_solver {
                 let cookie_val = cookie_headers
                     .as_ref()
                     .and_then(|h| h.get(COOKIE))
@@ -330,20 +387,19 @@ async fn main() -> Result<()> {
             }
             if results.is_empty() {
                 for url in page_urls {
-                    let csrin_solver_allowed = if cfg!(test) {
-                        true
-                    } else {
-                        let allow_env = std::env::var("ALLOW_CSRIN_SOLVER")
-                            .ok()
-                            .map(|v| v == "1")
-                            .unwrap_or(false);
-                        let cf_local = cf_url.contains("127.0.0.1") || cf_url.contains("localhost");
-                        let non_default_cf = cf_url != "http://localhost:8191/v1";
-                        allow_env || cf_local || non_default_cf
-                    };
-                    let use_solver_for_this = use_cf
-                        && (site.requires_cloudflare
-                            || (site.name.eq_ignore_ascii_case("csrin") && csrin_solver_allowed));
+                    // Solver gating:
+                    // - Default: use solver when the site requires Cloudflare
+                    // - csrin: allow solver when explicitly enabled via env, or when a non-default/local CF URL is provided (for tests)
+                    let allow_env = std::env::var("ALLOW_CSRIN_SOLVER")
+                        .ok()
+                        .map(|v| v == "1")
+                        .unwrap_or(false);
+                    let cf_local = cf_url.contains("127.0.0.1") || cf_url.contains("localhost");
+                    let non_default_cf = cf_url != "http://localhost:8191/v1";
+                    let csrin_solver_allowed = site.name.eq_ignore_ascii_case("csrin")
+                        && (allow_env || cf_local || non_default_cf);
+                    let use_solver_for_this =
+                        use_cf && (site.requires_cloudflare || csrin_solver_allowed);
                     let html = if use_solver_for_this {
                         if debug {
                             eprintln!("[debug] site={} using FlareSolverr {}", site.name, cf_url);
@@ -412,10 +468,35 @@ async fn main() -> Result<()> {
                             _ => {}
                         }
                     }
+                    // Extra filtering for gog-games to avoid unrelated pages/cards
+                    if site.name.eq_ignore_ascii_case("gog-games") {
+                        filter_results_by_query_strict(&mut page_results, &query);
+                    }
                     results.extend(page_results);
                     if results.len() >= 5000 {
                         // safety cap
                         break;
+                    }
+                }
+            }
+            // csrin: Automatic Playwright fallback if listing/feed produced nothing and user didn't explicitly request it
+            if site.name.eq_ignore_ascii_case("csrin") && results.is_empty() && !no_playwright {
+                let cookie_val = cookie_headers
+                    .as_ref()
+                    .and_then(|h| h.get(COOKIE))
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                if let Some(html) = fetch_csrin_playwright_html(&query, cookie_val).await {
+                    if debug {
+                        eprintln!(
+                            "[debug] site={} via Playwright (auto) html_len={}",
+                            site.name,
+                            html.len()
+                        );
+                    }
+                    let rs = parse_results(&site, &html, &query);
+                    if !rs.is_empty() {
+                        results = rs;
                     }
                 }
             }
@@ -545,11 +626,271 @@ async fn main() -> Result<()> {
     } else {
         cli.format
     };
-    match out_format {
-        OutputFormat::Json => output::print_pretty_json(&combined),
-        OutputFormat::Table => output::print_table_grouped(&combined),
+    // Default to TUI when attached to a terminal and table output is requested
+    if matches!(out_format, OutputFormat::Table)
+        && atty::is(atty::Stream::Stdin)
+        && atty::is(atty::Stream::Stdout)
+    {
+        run_live_tui(&combined)?;
+    } else {
+        match out_format {
+            OutputFormat::Json => output::print_pretty_json(&combined),
+            OutputFormat::Table => output::print_table_grouped(&combined),
+        }
     }
     Ok(())
+}
+
+fn run_live_tui(results: &[SearchResult]) -> anyhow::Result<()> {
+    // Setup terminal
+    let mut stdout = stdout();
+    execute!(stdout, terminal::EnterAlternateScreen)?;
+    terminal::enable_raw_mode()?;
+    let backend = ratatui::backend::CrosstermBackend::new(stdout);
+    let mut terminal = ratatui::Terminal::new(backend)?;
+
+    // Prepare grouped entries and state (group by site, render boxed groups)
+    use std::collections::BTreeMap;
+    let mut by_site: BTreeMap<&str, Vec<&SearchResult>> = BTreeMap::new();
+    for r in results {
+        by_site.entry(&r.site).or_default().push(r);
+    }
+    // Meta for navigation and opening: one None for box top, Some(url) per item line, one None for box bottom
+    let mut entry_urls: Vec<Option<String>> = Vec::new();
+    // Keep ordered groups for rendering
+    let groups: Vec<(String, Vec<(String, String)>)> = by_site
+        .into_iter()
+        .map(|(site, items)| {
+            let list: Vec<(String, String)> = items
+                .into_iter()
+                .map(|r| (r.title.clone(), r.url.clone()))
+                .collect();
+            (site.to_string(), list)
+        })
+        .collect();
+    for (_site, items) in &groups {
+        entry_urls.push(None); // top border
+        for (_t, u) in items {
+            entry_urls.push(Some(u.clone()));
+        }
+        entry_urls.push(None); // bottom border
+    }
+    let mut state = ListState::default();
+    // Select first selectable row
+    let first_sel = entry_urls.iter().position(|u| u.is_some()).unwrap_or(0);
+    if !entry_urls.is_empty() {
+        state.select(Some(first_sel));
+    }
+
+    // Drain any pending keystrokes (e.g., the Enter used to run the command)
+    while event::poll(std::time::Duration::from_millis(0))? {
+        let _ = event::read()?;
+    }
+
+    let mut should_quit = false;
+    while !should_quit {
+        terminal.draw(|f| {
+            let area = f.size();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(area);
+
+            // Build rendered lines based on available width to draw ASCII boxes per site
+            let width = chunks[0].width.max(2) as usize;
+            let inner = width.saturating_sub(2);
+            let mut rendered: Vec<String> = Vec::with_capacity(entry_urls.len());
+            for (site, items) in &groups {
+                // Top border with centered-ish site name
+                let title = format!(" {} ", site);
+                let mut top = String::new();
+                top.push('┌');
+                if title.len() + 2 <= inner {
+                    // pad with dashes before and after title
+                    let left = 1usize;
+                    let right = inner.saturating_sub(left + title.len());
+                    top.push_str(&"─".repeat(left));
+                    top.push_str(&title);
+                    top.push_str(&"─".repeat(right));
+                } else {
+                    top.push_str(&"─".repeat(inner));
+                }
+                top.push('┐');
+                rendered.push(top);
+
+                for (t, u) in items {
+                    let mut mid = String::new();
+                    mid.push('│');
+                    let content = format!(" - {} ({})", t, u);
+                    // ensure at least inner chars, pad or truncate
+                    if content.len() >= inner {
+                        mid.push_str(&content[..inner.min(content.len())]);
+                    } else {
+                        mid.push_str(&content);
+                        mid.push_str(&" ".repeat(inner - content.len()));
+                    }
+                    mid.push('│');
+                    rendered.push(mid);
+                }
+
+                let mut bot = String::new();
+                bot.push('└');
+                bot.push_str(&"─".repeat(inner));
+                bot.push('┘');
+                rendered.push(bot);
+            }
+
+            let items: Vec<ListItem> = rendered
+                .iter()
+                .map(|text| ListItem::new(Line::from(text.as_str())))
+                .collect();
+
+            let title = format!(
+                "Results ({}). ↑/↓ move, PgUp/PgDn scroll, Enter/o open, q quit",
+                results.len()
+            );
+            let list = List::new(items)
+                .block(Block::default().title(title).borders(Borders::ALL))
+                .highlight_symbol("> ")
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .repeat_highlight_symbol(false);
+            f.render_stateful_widget(list, chunks[0], &mut state);
+
+            // Footer/help with selected URL
+            let sel = state
+                .selected()
+                .unwrap_or(0)
+                .min(entry_urls.len().saturating_sub(1));
+            let footer = if entry_urls.is_empty() {
+                String::new()
+            } else {
+                entry_urls[sel].clone().unwrap_or_default()
+            };
+            let foot = Paragraph::new(footer)
+                .block(Block::default().borders(Borders::TOP))
+                .wrap(Wrap { trim: false });
+            f.render_widget(foot, chunks[1]);
+        })?;
+
+        // Handle input & resize; non-blocking poll
+        if event::poll(std::time::Duration::from_millis(150))? {
+            match event::read()? {
+                event::Event::Key(k) => {
+                    if k.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match k.code {
+                        event::KeyCode::Char('q') | event::KeyCode::Esc => should_quit = true,
+                        event::KeyCode::Up => {
+                            let mut i = state.selected().unwrap_or(0);
+                            i = i.saturating_sub(1);
+                            // skip non-selectable lines (borders)
+                            while i > 0 && entry_urls.get(i).and_then(|u| u.as_ref()).is_none() {
+                                i = i.saturating_sub(1);
+                            }
+                            state.select(Some(i));
+                        }
+                        event::KeyCode::Down => {
+                            let mut i = state.selected().unwrap_or(0);
+                            let max = entry_urls.len().saturating_sub(1);
+                            if i < max {
+                                i += 1;
+                            }
+                            while i < max && entry_urls.get(i).and_then(|u| u.as_ref()).is_none() {
+                                i += 1;
+                            }
+                            state.select(Some(i));
+                        }
+                        event::KeyCode::PageUp => {
+                            let i = state.selected().unwrap_or(0);
+                            let step = 10usize;
+                            let next = i.saturating_sub(step);
+                            state.select(Some(next));
+                        }
+                        event::KeyCode::PageDown => {
+                            let i = state.selected().unwrap_or(0);
+                            let step = 10usize;
+                            let max = entry_urls.len().saturating_sub(1);
+                            let next = (i + step).min(max);
+                            state.select(Some(next));
+                        }
+                        event::KeyCode::Home => {
+                            state.select(Some(0));
+                        }
+                        event::KeyCode::End => {
+                            let max = entry_urls.len().saturating_sub(1);
+                            state.select(Some(max));
+                        }
+                        event::KeyCode::Enter | event::KeyCode::Char('o') => {
+                            if let Some(i) = state.selected() {
+                                if let Some(Some(url)) = entry_urls.get(i) {
+                                    let _ = open_url(url);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                event::Event::Resize(_, _) => {}
+                _ => {}
+            }
+        }
+    }
+
+    // Restore terminal
+    terminal::disable_raw_mode()?;
+    crossterm::execute!(terminal.backend_mut(), terminal::LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn open_url(url: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
+            .map(|_| ())?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())?;
+        return Ok(());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+fn filter_results_by_query_strict(results: &mut Vec<SearchResult>, query: &str) {
+    let ql = query.to_lowercase();
+    let ql_dash = ql.replace(' ', "-");
+    let ql_plus = ql.replace(' ', "+");
+    let ql_encoded = ql.replace(' ', "%20");
+    let ql_stripped = ql.replace(' ', "");
+    results.retain(|r| {
+        let tl = r.title.to_lowercase();
+        let ul = r.url.to_lowercase();
+        let matches = tl.contains(&ql)
+            || ul.contains(&ql)
+            || ul.contains(&ql_dash)
+            || ul.contains(&ql_plus)
+            || ul.contains(&ql_encoded)
+            || ul.contains(&ql_stripped);
+        let gog_path_ok = ul.contains("/game/") || ul.contains("/games/");
+        matches && gog_path_ok
+    });
 }
 
 async fn fetch_gog_games_ajax_json(

@@ -22,6 +22,7 @@ services:
     stdin_open: true
     tty: true
     # No command override: default CMD ["websearcher"] keeps it interactive
+    # Use --no-playwright to force non-Playwright fallback if needed
 
   tests:
     image: rust:1.89
@@ -49,4 +50,4 @@ services:
     # Example interactive run:
     # docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.js 'elden ring'"
     # Or run the Rust app with Playwright path:
-    # docker compose run --rm playwright bash -lc "npm i -D playwright && cargo build --release --locked && CSRIN_PAGES=2 target/release/website-searcher 'elden ring' --sites csrin --format table --debug --csrin-playwright --no-cf"
+    # docker compose run --rm playwright bash -lc "npm i -D playwright && cargo build --release --locked && CSRIN_PAGES=2 target/release/website-searcher 'elden ring' --sites csrin --format table --debug --no-cf"

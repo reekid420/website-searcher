@@ -13,7 +13,6 @@ fn csrin_playwright_runs_and_prints_header() {
         "csrin",
         "--format",
         "table",
-        "--csrin-playwright",
         "--no-cf",
         "--limit",
         "1",

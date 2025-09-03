@@ -22,6 +22,9 @@ websearcher "elden ring" --sites "fitgirl,dodi,steamrip" --limit 5 --format tabl
 # Interactive mode (no args): prompts for query and sites, prints a table
 websearcher
 
+# TUI is default for table output when interactive (press q to quit)
+websearcher "elden ring" --sites fitgirl,dodi --format table
+
 # Cloudflare
 # CF solver is ON by default. Disable globally with:
 websearcher "elden ring" --no-cf
@@ -31,9 +34,9 @@ websearcher "elden ring" --cf_url http://localhost:8191/v1
 # gog-games specifics: solver is ignored; optional cookies help
 websearcher "cyberpunk" --sites gog-games --format table --cookie "cf_clearance=...; gog_games_download_free_gog_pc_games_session=...; XSRF-TOKEN=..."
 
-# cs.rin.ru via Playwright (search or paginated listing fallback)
+# cs.rin.ru via Playwright (auto by default). Use --no-playwright to force non-PW fallbacks
 # Requires Node + Playwright locally, or use docker-compose 'playwright' service
-websearcher "elden ring" --sites csrin --format table --debug --csrin-playwright --no-cf
+websearcher "elden ring" --sites csrin --format table --debug --no-cf
 # Optional: number of listing pages to scan when search is rate-limited
 set CSRIN_PAGES=2   # Windows
 export CSRIN_PAGES=2 # macOS/Linux
@@ -44,9 +47,11 @@ Flags:
 - `--sites a,b,c` restrict to listed sites (default all)
 - `--debug` print diagnostics and write HTML samples to `debug/`
 - `--format [json|table]` output format (default json)
- - `--no-cf` disable Cloudflare solver (enabled by default)
- - `--cf_url URL` override FlareSolverr endpoint (default `http://localhost:8191/v1`)
- - `--cookie "key=value; other=value2"` forward cookies to requests and solver
+- `--no-cf` disable Cloudflare solver (enabled by default)
+- `--cf_url URL` override FlareSolverr endpoint (default `http://localhost:8191/v1`)
+- `--cookie "key=value; other=value2"` forward cookies to requests and solver
+- TUI is enabled automatically for table output when running interactively
+- `--no-playwright` disable automatic Playwright fallback for cs.rin
 
 Interactive mode:
 - Run `websearcher` with no arguments to be prompted for a search phrase and site selection.
@@ -60,7 +65,7 @@ Interactive mode:
 - `gog-games`: solver is ignored; uses normal fetch plus AJAX JSON/HTML fragment fallback. Cookies often improve results.
 - `ankergames`: uses path-encoded search (spaces as `%20`) and improved selectors; listing page parsing supported.
 - `csrin`: parses the forum Releases listing; each topic is treated as a game entry.
-- Selectors are best-effort with fallbacks; contributions to improve coverage are welcome.
+- Table output auto-wraps titles to your terminal width; resizing the terminal updates layout in `--live` mode.
 
 ### Docker / Devcontainer
 
@@ -107,7 +112,7 @@ cargo test
 Playwright:
 - Local: `npm i -D playwright && npx playwright install --with-deps`
 - Compose: `docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.js 'elden ring'"`
-- CI: A smoke run executes `--csrin-playwright --no-cf` across all OSes/arches.
+- CI: A smoke run executes `--no-cf` with stubbed HTML for Playwright path.
 
 Run tests:
 ```powershell
