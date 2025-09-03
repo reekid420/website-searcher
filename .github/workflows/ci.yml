@@ -65,7 +65,7 @@ jobs:
           CSRIN_PAGES: 1
         run: |
           cargo build --release --locked
-          .${{ runner.os == 'Windows' && '\\' || '/' }}target${{ runner.os == 'Windows' && '\\release\\' || '/release/' }}website-searcher${{ runner.os == 'Windows' && '.exe' || '' }} "elden ring" --sites csrin --format table --debug --csrin-playwright --no-cf
+          .${{ runner.os == 'Windows' && '\\' || '/' }}target${{ runner.os == 'Windows' && '\\release\\' || '/release/' }}website-searcher${{ runner.os == 'Windows' && '.exe' || '' }} "elden ring" --sites csrin --format table --debug
  
       - name: install audit
         run: cargo install cargo-audit
