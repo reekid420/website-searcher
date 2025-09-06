@@ -5,22 +5,10 @@ use scraper::{Html, Selector};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-mod cf;
-mod config;
-mod fetcher;
-mod models;
-mod output;
-mod parser;
-mod query;
+use website_searcher_core::{cf, fetcher, output};
 
-use cf::fetch_via_solver;
-use config::site_configs;
 use crossterm::event::KeyEventKind;
 use crossterm::{event, execute, terminal};
-use fetcher::{build_http_client, fetch_with_retry};
-use models::{SearchKind, SearchResult};
-use parser::parse_results;
-use query::{build_search_url, normalize_query};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
@@ -33,6 +21,12 @@ use std::io::stdout;
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use website_searcher_core::cf::fetch_via_solver;
+use website_searcher_core::config::site_configs;
+use website_searcher_core::fetcher::{build_http_client, fetch_with_retry};
+use website_searcher_core::models::{SearchKind, SearchResult};
+use website_searcher_core::parser::parse_results;
+use website_searcher_core::query::{build_search_url, normalize_query};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum OutputFormat {
@@ -626,11 +620,11 @@ async fn main() -> Result<()> {
     } else {
         cli.format
     };
-    // Default to TUI when attached to a terminal and table output is requested
-    if matches!(out_format, OutputFormat::Table)
-        && atty::is(atty::Stream::Stdin)
-        && atty::is(atty::Stream::Stdout)
-    {
+    // Keep TUI only for interactive mode (no query provided). If user explicitly passes
+    // --format table with a query, print classic table output instead of TUI.
+    let interactive_tui =
+        cli.query.is_none() && atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout);
+    if interactive_tui && matches!(out_format, OutputFormat::Table) {
         run_live_tui(&combined)?;
     } else {
         match out_format {
@@ -895,7 +889,7 @@ fn filter_results_by_query_strict(results: &mut Vec<SearchResult>, query: &str) 
 
 async fn fetch_gog_games_ajax_json(
     client: &reqwest::Client,
-    site: &crate::models::SiteConfig,
+    site: &website_searcher_core::models::SiteConfig,
     query: &str,
     use_cf: bool,
     cf_url: &str,
@@ -999,7 +993,7 @@ async fn fetch_gog_games_ajax_json(
 
 async fn fetch_csrin_feed(
     client: &reqwest::Client,
-    site: &crate::models::SiteConfig,
+    site: &website_searcher_core::models::SiteConfig,
     query: &str,
     _use_cf: bool,
     cf_url: &str,
@@ -1120,7 +1114,7 @@ async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Opt
             return Some(fake);
         }
     }
-    let script = "scripts/csrin_search.js";
+    let script = "scripts/csrin_search.cjs";
     let mut cmd = Command::new("node");
     cmd.arg(script).arg(query);
     if let Some(c) = cookie {

@@ -3,14 +3,20 @@
 Cross-platform CLI that queries multiple game-download sites in parallel, scrapes results, and prints pretty JSON or a grouped table.
 
 ### Build
+```bash
+# If on linux
+chmod +x ./compile.sh
+./compile.sh
+```
 
-1. Install Rust via `https://rustup.rs`.
-2. Clone this repo, then run:
-   - `cargo build --release`
+```powershell
+# If on windows
+./compile.ps1
+```
 
 ### Usage
 
-```powershell
+```bash
 # Basic
 websearcher "elden ring" --limit 10
 websearcher --sites steamrip,reloadedsteam "baldur's gate 3"
@@ -86,7 +92,7 @@ docker compose up --build
 
 ### Development
 
-```powershell
+```bash
 cargo fmt
 cargo clippy
 cargo test
@@ -111,7 +117,7 @@ cargo test
 
 Playwright:
 - Local: `npm i -D playwright && npx playwright install --with-deps`
-- Compose: `docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.js 'elden ring'"`
+- Compose: `docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.cjs 'elden ring'"`
 - CI: A smoke run executes `--no-cf` with stubbed HTML for Playwright path.
 
 Run tests:

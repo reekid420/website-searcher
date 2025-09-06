@@ -1,5 +1,5 @@
-// scripts/csrin_search.js
-// Usage: node scripts/csrin_search.js "elden ring"
+// scripts/csrin_search.cjs
+// Usage: node scripts/csrin_search.cjs "elden ring"
 // Requires: npm i -D playwright
 
 const { chromium } = require('playwright');

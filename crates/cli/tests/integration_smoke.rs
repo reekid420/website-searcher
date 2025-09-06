@@ -5,13 +5,13 @@ use std::process::Command;
 #[test]
 fn interactive_empty_input_errors() {
     use std::io::Write;
-    use std::process::{Command as StdCommand, Stdio};
-    let mut child = StdCommand::new(env!("CARGO_BIN_EXE_website-searcher"))
-        .stdin(Stdio::piped())
+    use std::process::Stdio;
+    // Use assert_cmd to locate the test-built binary reliably
+    let mut cmd = Command::cargo_bin("website-searcher").expect("binary built");
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn interactive");
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn interactive");
     {
         let stdin = child.stdin.as_mut().expect("stdin");
         stdin.write_all(b"\n").expect("write stdin");

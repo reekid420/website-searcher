@@ -3,27 +3,43 @@ alwaysApply: true
 description: High-level project structure and entry points for website-searcher
 ---
 
-# Project Structure Guide
+# Project Structure Guide (Workspace)
 
-Entry points and modules:
-- CLI entry and orchestration: [src/main.rs](mdc:src/main.rs)
-- Site configs and selectors: [src/config.rs](mdc:src/config.rs)
-- HTTP client and retry: [src/fetcher.rs](mdc:src/fetcher.rs)
-- Cloudflare (FlareSolverr) integration: [src/cf.rs](mdc:src/cf.rs)
-- Parsing helpers and fallbacks: [src/parser.rs](mdc:src/parser.rs)
-- Query normalization and URL builder: [src/query.rs](mdc:src/query.rs)
-- Models (SearchKind, SiteConfig, SearchResult): [src/models.rs](mdc:src/models.rs)
-- Output (colored JSON): [src/output.rs](mdc:src/output.rs)
-- Docs and plan: [README.md](mdc:README.md), [PLAN.md](mdc:PLAN.md), [CLOUDFLARE_BYPASS_PLAN.md](mdc:CLOUDFLARE_BYPASS_PLAN.md)
-- Debug HTML samples (optional): [debug/](mdc:debug/)
+Workspace layout:
+- Core library: [crates/core/](mdc:crates/core/)
+  - Site configs/selectors: [crates/core/src/config.rs](mdc:crates/core/src/config.rs)
+  - HTTP client + retry: [crates/core/src/fetcher.rs](mdc:crates/core/src/fetcher.rs)
+  - Cloudflare (FlareSolverr): [crates/core/src/cf.rs](mdc:crates/core/src/cf.rs)
+  - Parsing helpers/fallbacks: [crates/core/src/parser.rs](mdc:crates/core/src/parser.rs)
+  - Query normalization/URL builder: [crates/core/src/query.rs](mdc:crates/core/src/query.rs)
+  - Models (SearchKind, SiteConfig, SearchResult): [crates/core/src/models.rs](mdc:crates/core/src/models.rs)
+  - Output helpers: [crates/core/src/output.rs](mdc:crates/core/src/output.rs)
 
-CLI flags (see [src/main.rs](mdc:src/main.rs)):
+- CLI binary: [crates/cli/](mdc:crates/cli/)
+  - Entry + orchestration: [crates/cli/main.rs](mdc:crates/cli/main.rs)
+  - Integration tests: [crates/cli/tests/](mdc:crates/cli/tests/)
+  - Node helper for cs.rin (Playwright): [scripts/csrin_search.cjs](mdc:scripts/csrin_search.cjs)
+
+- Desktop GUI (Tauri + React):
+  - Tauri app: [src-tauri/](mdc:src-tauri/)
+    - Commands in [src-tauri/src/lib.rs](mdc:src-tauri/src/lib.rs): `search_gui`, `list_sites`
+    - Config: [src-tauri/tauri.conf.json](mdc:src-tauri/tauri.conf.json) (`devUrl` → Vite, `frontendDist` → `gui/dist`)
+  - React app: [gui/](mdc:gui/)
+    - API: [gui/src/api.ts](mdc:gui/src/api.ts)
+    - UI: [gui/src/App.tsx](mdc:gui/src/App.tsx) (site multi-select + all CLI flags)
+
+Docs: [README.md](mdc:README.md), [GUI_PLAN.md](mdc:GUI_PLAN.md)
+Debug samples: [debug/](mdc:debug/)
+
+CLI flags (see [crates/cli/main.rs](mdc:crates/cli/main.rs)):
 - `--limit`, `--sites a,b,c`, `--debug`, `--format [json|table]`
-- Cloudflare: CF is ON by default; use `--no-cf` to disable; `--cf_url` to override endpoint
-- Cookies: `--cookie "key=value; other=value2"` (forwarded to requests and solver)
+- Cloudflare: `--no-cf`, `--cf-url`
+- Cookies: `--cookie "key=value; other=value2"`
+- cs.rin: `--csrin-pages`, `--csrin-search`, `--no-playwright`
 
 Interactive mode:
-- If the query is omitted, the app prompts for the search phrase and site selection (with All as default). Interactive output defaults to table.
+- If the query is omitted, the app prompts for the search phrase and site selection (starts with none selected; choose explicitly or press Enter for ALL). Interactive output defaults to table.
+- TUI: When running interactively and `--format table`, a live TUI is shown by default (no `--live` flag). Non-interactive sessions print tables to stdout.
 
 Adding a new site:
 1) Add a `SiteConfig` entry in [src/config.rs](mdc:src/config.rs). Choose `SearchKind::{QueryParam, PathEncoded, FrontPage, ListingPage}` and define `result_selector`.
@@ -34,4 +50,5 @@ Adding a new site:
 Notes:
 - Concurrency is capped to 3 (Tokio semaphore).
 - Results are sorted and deduplicated by `(site, url)`.
-- `gog-games` special-case: solver is ignored; uses normal fetch + AJAX JSON/HTML fragment fallback (cookies recommended).
+- `gog-games` special-case: solver ignored; normal fetch + AJAX JSON/HTML fragment fallback; strict query/path filtering in both CLI and GUI.
+- Tauri dev: `cargo tauri dev` (runs `pnpm --dir gui dev`), build: `pnpm --dir gui build && cargo tauri build`.

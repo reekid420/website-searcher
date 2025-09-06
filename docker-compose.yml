@@ -48,6 +48,6 @@ services:
       - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0
       - CSRIN_PAGES=2
     # Example interactive run:
-    # docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.js 'elden ring'"
+    # docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.cjs 'elden ring'"
     # Or run the Rust app with Playwright path:
     # docker compose run --rm playwright bash -lc "npm i -D playwright && cargo build --release --locked && CSRIN_PAGES=2 target/release/website-searcher 'elden ring' --sites csrin --format table --debug --no-cf"
