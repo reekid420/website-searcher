@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures::stream::{FuturesUnordered, StreamExt};
 use reqwest::header::{
-    HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, ACCEPT, COOKIE, REFERER,
+    ACCEPT, COOKIE, HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, REFERER,
 };
 use tokio::sync::Semaphore;
 use website_searcher_core::{cf, config, fetcher, models, parser, query};

@@ -1,0 +1,53 @@
+name: build-macos
+
+on:
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        run: pnpm i --frozen-lockfile
+
+      - name: Build CLI (release)
+        run: cargo build -p website-searcher --release
+
+      - name: Stage Tauri sidecar
+        run: |
+          mkdir -p src-tauri/bin
+          TRIPLE=$(rustc -Vv | awk '/host:/{print $2}')
+          cp target/release/website-searcher src-tauri/bin/website-searcher-$TRIPLE
+
+      - name: Build Tauri (dmg)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          args: --bundles dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: github-actions.mdc
+          files: |
+            target/release/bundle/dmg/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

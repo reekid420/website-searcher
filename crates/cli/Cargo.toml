@@ -1,6 +1,9 @@
 [package]
 name = "website-searcher"
 version = "0.1.0"
+license = "MIT"
+authors = ["reekid420"]
+rust-version = "1.87.0"
 edition = "2024"
 
 [[bin]]
