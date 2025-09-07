@@ -25,7 +25,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install frontend deps (gui)
-        run: pnpm --dir gui i --frozen-lockfile
+        run: pnpm --dir gui i --no-frozen-lockfile
 
       - name: Build CLI (release)
         run: cargo build -p website-searcher --release
