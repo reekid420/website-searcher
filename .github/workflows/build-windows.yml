@@ -6,7 +6,11 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest,windows-11-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
