@@ -28,8 +28,8 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install frontend deps
-        run: pnpm i --frozen-lockfile
+      - name: Install frontend deps (gui)
+        run: pnpm --dir gui i --frozen-lockfile
 
       - name: Build CLI (release)
         run: cargo build -p website-searcher --release
