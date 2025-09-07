@@ -4,6 +4,9 @@ on:
   workflow_dispatch: {}
   workflow_call: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -51,7 +54,8 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: github-actions.mdc
+          tag_name: website-searcher
+          name: website-searcher
           files: |
             target/release/bundle/msi/*.msi
             target/release/bundle/nsis/*-setup.exe
