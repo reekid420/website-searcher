@@ -1,0 +1,129 @@
+<?if $(sys.BUILDARCH)="x86"?>
+    <?define Win64 = "no" ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?elseif $(sys.BUILDARCH)="x64"?>
+    <?define Win64 = "yes" ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?elseif $(sys.BUILDARCH)="arm64"?>
+    <?define Win64 = "yes" ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else?>
+    <?error Unsupported value of sys.BUILDARCH=$(sys.BUILDARCH)?>
+<?endif?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product
+            Id="*"
+            Name="website-searcher"
+            UpgradeCode="5050138d-ced9-5452-8681-1525c14e53df"
+            Language="1033"
+            Manufacturer="reekid"
+            Version="0.1.0">
+
+        <Package Id="*"
+                 Keywords="Installer"
+                 InstallerVersion="450"
+                 Languages="0"
+                 Compressed="yes"
+                 InstallScope="perMachine"
+                 SummaryCodepage="1252"/>
+
+        <Property Id="AUTOLAUNCHAPP" Secure="yes" />
+        <Property Id="LAUNCHAPPARGS" Secure="yes" />
+        <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit." />
+
+        <InstallExecuteSequence>
+            <RemoveShortcuts>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveShortcuts>
+        </InstallExecuteSequence>
+
+        <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
+
+        <!-- Product icon omitted to simplify linking; ARP icon optional -->
+        <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
+        <SetProperty Id="ARPNOMODIFY" Value="1" After="InstallValidate" Sequence="execute"/>
+
+        <Property Id="INSTALLDIR">
+          <RegistrySearch Id="PrevInstallDirHKLM" Root="HKLM" Key="Software\reekid\website-searcher" Name="InstallDir" Type="raw" />
+        </Property>
+
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch website-searcher" />
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+        <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="[LAUNCHAPPARGS]" Return="asyncNoWait" />
+
+        <UI>
+            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+            <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+        </UI>
+
+        <UIRef Id="WixUI_FeatureTree" />
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="DesktopFolder" Name="Desktop">
+                <Component Id="ApplicationShortcutDesktop" Guid="3A991B56-5F38-4A8A-8B23-4FC60C9EC41A">
+                    <Shortcut Id="ApplicationDesktopShortcut" Name="website-searcher" Description="Runs website-searcher" Target="[!Path]" WorkingDirectory="INSTALLDIR" />
+                    <RemoveFolder Id="DesktopFolder" On="uninstall" />
+                    <RegistryValue Root="HKCU" Key="Software\reekid\website-searcher" Name="Desktop Shortcut" Type="integer" Value="1" KeyPath="yes" />
+                </Component>
+            </Directory>
+            <Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">
+                <Directory Id="INSTALLDIR" Name="website-searcher"/>
+            </Directory>
+            <Directory Id="ProgramMenuFolder">
+                <Directory Id="ApplicationProgramsFolder" Name="website-searcher"/>
+            </Directory>
+        </Directory>
+
+        <DirectoryRef Id="INSTALLDIR">
+            <Component Id="Path" Guid="6d8ccb77-dcfe-5fdb-98f7-63b666d0ee2d" Win64="$(var.Win64)">
+                <File Id="Path" Source="$(var.SourceDir)" KeyPath="yes" Checksum="yes"/>
+            </Component>
+            <Directory Id="BinDir" Name="bin">
+                <Component Id="CliExe" Guid="7F8B3D04-2B3E-4C4D-9C2F-13C5C13C7F4B">
+                    <File Id="CliBinaryFile" Name="website-searcher.exe" Source="..\..\..\..\src-tauri\wix\bin\website-searcher.exe" KeyPath="yes"/>
+                </Component>
+                <Component Id="AliasWsCmd" Guid="3B8E3B53-38E7-4A2B-99C7-0E2B5B8A5B4F">
+                    <File Id="AliasWsCmdFile" Name="ws.cmd" Source="..\..\..\..\src-tauri\wix\bin\ws.cmd" KeyPath="yes"/>
+                </Component>
+                <Component Id="EnvPath" Guid="A1EDC637-24A8-42D2-841E-209654803E82" KeyPath="yes">
+                    <Environment Id="AddToPathBin" Name="PATH" Value="[BinDir]" Permanent="no" Part="last" Action="set" System="yes"/>
+                </Component>
+            </Directory>
+            <Component Id="CMP_UninstallShortcut" Guid="6E0E0B7D-7D9D-4B44-9B5B-6BA5A4B27169">
+                <Shortcut Id="UninstallShortcut" Name="Uninstall website-searcher" Description="Uninstalls website-searcher" Target="[System64Folder]msiexec.exe" Arguments="/x [ProductCode]" />
+                <RemoveFolder Id="INSTALLDIR" On="uninstall" />
+            </Component>
+        </DirectoryRef>
+
+        <DirectoryRef Id="ApplicationProgramsFolder">
+            <Component Id="ApplicationShortcut" Guid="E2D8E883-7A7D-4E5A-8F2A-7C9F6A1B23FA">
+                <RegistryValue Root="HKCU" Key="Software\reekid\website-searcher" Name="Start Menu Shortcut" Type="integer" Value="1" KeyPath="yes"/>
+                <Shortcut Id="ApplicationStartMenuShortcut" Name="website-searcher" Description="Runs website-searcher" Target="[!Path]" WorkingDirectory="INSTALLDIR">
+                    <ShortcutProperty Key="System.AppUserModel.ID" Value="com.reekid.website-searcher"/>
+                </Shortcut>
+                <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
+           </Component>
+        </DirectoryRef>
+
+        <Feature Id="MainProgram" Title="Application" Description="Install website-searcher" Level="1" ConfigurableDirectory="INSTALLDIR" AllowAdvertise="no" Display="expand" Absent="disallow">
+            <Feature Id="ShortcutsFeature" Title="Shortcuts" Level="1">
+                <ComponentRef Id="Path"/>
+                <ComponentRef Id="CMP_UninstallShortcut" />
+                <ComponentRef Id="ApplicationShortcut" />
+                <ComponentRef Id="ApplicationShortcutDesktop" />
+            </Feature>
+            <Feature Id="CLI" Title="Command Line Interface" Level="1" Absent="allow">
+                <ComponentRef Id="CliExe"/>
+                <ComponentRef Id="AliasWsCmd"/>
+                <ComponentRef Id="EnvPath"/>
+            </Feature>
+        </Feature>
+
+        <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize"/>
+
+        <InstallExecuteSequence>
+          <Custom Action="LaunchApplication" After="InstallFinalize">AUTOLAUNCHAPP AND NOT Installed</Custom>
+        </InstallExecuteSequence>
+    </Product>
+</Wix>
+
+

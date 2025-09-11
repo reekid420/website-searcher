@@ -52,3 +52,6 @@ dist-ssr
 .cursor/rules/todo2.mdc
 .cursor/mcp.json
 .todo2/
+src-tauri/bin
+src-tauri/wix/bin
+!src-tauri/wix/bin/ws.cmd

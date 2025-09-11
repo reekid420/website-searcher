@@ -43,13 +43,30 @@ jobs:
           mkdir -p src-tauri/bin
           TRIPLE=$(rustc -Vv | awk '/host:/{print $2}')
           cp target/release/website-searcher.exe src-tauri/bin/website-searcher-$TRIPLE.exe
+          # Stage CLI into wix/bin and ws.cmd launcher (inputs for WiX fragment)
+          mkdir -p src-tauri/wix/bin
+          cp target/release/website-searcher.exe src-tauri/wix/bin/website-searcher.exe
+          cp scripts/ws.cmd src-tauri/wix/bin/ws.cmd
 
-      - name: Build Tauri (msi,nsis)
+      - name: Build Tauri (msi)
         uses: tauri-apps/tauri-action@v0
         with:
-          args: --bundles msi,nsis
+          args: --bundles msi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install MSI and test
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path target/release/bundle/msi -Filter *.msi | Select-Object -First 1
+          if ($null -ne $msi) {
+            Write-Host "Installing MSI: $($msi.FullName)"
+            msiexec /i "$($msi.FullName)" /qn /norestart
+            Test-Path "C:\Program Files\website-searcher" | Out-Null
+            Get-ChildItem -Recurse "C:\Program Files\website-searcher" | Select-String -Pattern "website-searcher(.exe)?" | Out-Null
+          }
+
+      # NSIS removed: MSI only
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -58,7 +75,6 @@ jobs:
           name: website-searcher
           files: |
             target/release/bundle/msi/*.msi
-            target/release/bundle/nsis/*-setup.exe
-            target/release/website-searcher-gui.exe
+            
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

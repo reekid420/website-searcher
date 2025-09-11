@@ -39,12 +39,47 @@ jobs:
           TRIPLE=$(rustc -Vv | awk '/host:/{print $2}')
           cp target/release/website-searcher src-tauri/bin/website-searcher-$TRIPLE
 
-      - name: Build Tauri (dmg)
+      - name: Build Tauri (dmg,pkg)
         uses: tauri-apps/tauri-action@v0
         with:
-          args: --bundles dmg
+          args: --bundles dmg,pkg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install DMG and test
+        run: |
+          DMG=$(ls target/release/bundle/dmg/*.dmg | head -n1)
+          echo "DMG=$DMG"
+          hdiutil attach "$DMG" -mountpoint /Volumes/WS -quiet
+          if [ -d "/Volumes/WS/website-searcher.app" ]; then
+            sudo cp -R "/Volumes/WS/website-searcher.app" /Applications || true
+          else
+            # Fallback: find the .app name
+            APP=$(ls /Volumes/WS/*.app | head -n1)
+            echo "APP=$APP"
+            sudo cp -R "$APP" /Applications || true
+          fi
+          test -d "/Applications/website-searcher.app"
+          # Look for CLI sidecar inside the bundle
+          ls "/Applications/website-searcher.app/Contents/MacOS" | grep -E '^website-searcher($|-)'
+          # Create ws alias in /usr/local/bin and test it
+          CLI=$(ls "/Applications/website-searcher.app/Contents/MacOS"/website-searcher* | head -n1)
+          if [ -n "$CLI" ]; then
+            sudo ln -sf "$CLI" /usr/local/bin/ws
+            command -v ws
+            ws --help || true
+          fi
+          # Detach volume
+          hdiutil detach /Volumes/WS -quiet || true
+
+      - name: Install PKG and test ws symlink
+        run: |
+          PKG=$(ls target/release/bundle/pkg/*.pkg 2>/dev/null | head -n1 || true)
+          if [ -n "$PKG" ]; then
+            sudo installer -pkg "$PKG" -target /
+            command -v ws || true
+            ws --help || true
+          fi
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -53,5 +88,6 @@ jobs:
           name: website-searcher
           files: |
             target/release/bundle/dmg/*.dmg
+            target/release/bundle/pkg/*.pkg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

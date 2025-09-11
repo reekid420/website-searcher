@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- Fragment to install CLI + ws.cmd into INSTALLDIR\bin and add PATH. -->
   <Fragment>
-    <DirectoryRef Id="APPLICATIONFOLDER">
+    <DirectoryRef Id="INSTALLDIR">
       <Directory Id="BinDir" Name="bin">
         <Component Id="CliExe" Guid="7F8B3D04-2B3E-4C4D-9C2F-13C5C13C7F4B">
-          <File Id="CliBinaryFile" Name="website-searcher.exe" Source="wix\bin\website-searcher.exe" KeyPath="yes"/>
+          <File Id="CliBinaryFile" Name="website-searcher.exe" Source="..\..\..\..\src-tauri\wix\bin\website-searcher.exe" KeyPath="yes"/>
         </Component>
         <Component Id="AliasWsCmd" Guid="3B8E3B53-38E7-4A2B-99C7-0E2B5B8A5B4F">
-          <File Id="AliasWsCmdFile" Name="ws.cmd" Source="wix\bin\ws.cmd" KeyPath="yes"/>
+          <File Id="AliasWsCmdFile" Name="ws.cmd" Source="..\..\..\..\src-tauri\wix\bin\ws.cmd" KeyPath="yes"/>
         </Component>
         <Component Id="EnvPath" Guid="A1EDC637-24A8-42D2-841E-209654803E82" KeyPath="yes">
-          <Environment Id="AddToPath" Name="PATH" Value="[BinDir]" Permanent="no" Part="last" Action="set" System="yes"/>
+          <Environment Id="AddToPathBin" Name="PATH" Value="[BinDir]" Permanent="no" Part="last" Action="set" System="yes"/>
         </Component>
       </Directory>
     </DirectoryRef>

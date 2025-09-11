@@ -73,6 +73,12 @@ Interactive mode:
 - `csrin`: parses the forum Releases listing; each topic is treated as a game entry.
 - Table output auto-wraps titles to your terminal width; resizing the terminal updates layout in `--live` mode.
 
+#### Windows packaging (MSI)
+
+- MSI bundling uses a custom WiX template that installs the CLI into `INSTALLDIR\bin`, adds it to `PATH`, and deploys a `ws.cmd` alias.
+- The build script `compile.ps1` will attempt `cargo tauri build`. If the WiX link step fails, it automatically falls back to manually linking the MSI using the locally installed WiX tools (candle/light).
+- Ensure WiX tools are present locally (Tauri caches them under `%LOCALAPPDATA%\tauri\WixTools*`).
+
 ### Docker / Devcontainer
 
 - One-shot container (builds binary, runs interactive):

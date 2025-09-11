@@ -1114,7 +1114,7 @@ async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Opt
             return Some(fake);
         }
     }
-    let script = "scripts/csrin_search.cjs";
+    let script = "../../scripts/csrin_search.cjs";
     let mut cmd = Command::new("node");
     cmd.arg(script).arg(query);
     if let Some(c) = cookie {

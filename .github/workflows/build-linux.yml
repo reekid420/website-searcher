@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm]
+        os: [ubuntu-latest, ubuntu-24.04-arm, fedora-latest, fedora-39-arm64]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -53,6 +53,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install DEB and test (Ubuntu only)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          if ls target/release/bundle/deb/*.deb 1> /dev/null 2>&1; then
+            sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get -f install -y
+            test -d /opt/website-searcher
+            ls -R /opt/website-searcher | grep -E 'website-searcher($|-)'
+            # Create ws alias symlink and test
+            if [ -f /opt/website-searcher/bin/website-searcher ]; then
+              sudo ln -sf /opt/website-searcher/bin/website-searcher /usr/local/bin/ws
+            else
+              BIN=$(find /opt/website-searcher -type f -name 'website-searcher*' | head -n1)
+              if [ -n "$BIN" ]; then sudo ln -sf "$BIN" /usr/local/bin/ws; fi
+            fi
+            command -v ws
+            ws --help || true
+          fi
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -60,6 +78,82 @@ jobs:
           name: website-searcher
           files: |
             target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-fedora:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: fedora:39
+    steps:
+      - name: Install tools
+        run: dnf -y update && dnf -y install git curl sudo
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system deps (Fedora)
+        run: |
+          dnf -y install gcc make pkgconfig glib2-devel gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3 librsvg2-devel patchelf rpm-build
+
+      - name: Install frontend deps (gui)
+        run: pnpm --dir gui i --no-frozen-lockfile
+
+      - name: Build CLI (release)
+        run: cargo build -p website-searcher --release
+
+      - name: Stage Tauri sidecar
+        run: |
+          mkdir -p src-tauri/bin
+          TRIPLE=$(rustc -Vv | awk '/host:/{print $2}')
+          cp target/release/website-searcher src-tauri/bin/website-searcher-$TRIPLE
+
+      - name: Build Tauri (rpm)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          args: --bundles rpm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install RPM and test
+        run: |
+          rpm -Uvh --replacepkgs target/release/bundle/rpm/*.rpm
+          test -d /opt/website-searcher
+          ls -R /opt/website-searcher | grep -E 'website-searcher($|-)'
+          # Create ws alias symlink and test
+          if [ -f /opt/website-searcher/bin/website-searcher ]; then
+            ln -sf /opt/website-searcher/bin/website-searcher /usr/local/bin/ws
+          else
+            BIN=$(find /opt/website-searcher -type f -name 'website-searcher*' | head -n1)
+            if [ -n "$BIN" ]; then ln -sf "$BIN" /usr/local/bin/ws; fi
+          fi
+          command -v ws
+          ws --help || true
+
+      - name: Upload to GitHub Release (RPM)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: website-searcher
+          name: website-searcher
+          files: |
             target/release/bundle/rpm/*.rpm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

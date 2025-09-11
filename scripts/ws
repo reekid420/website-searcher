@@ -1,0 +1,24 @@
+#!/bin/sh
+
+# Wrapper alias for website-searcher CLI installed by the GUI bundle
+
+set -e
+
+CANDIDATES="
+/opt/website-searcher/website-searcher
+/opt/website-searcher/bin/website-searcher
+/Applications/website-searcher.app/Contents/MacOS/website-searcher
+$(dirname "$0")/website-searcher
+"
+
+for f in $CANDIDATES; do
+  if [ -x "$f" ]; then
+    exec "$f" "$@"
+  fi
+done
+
+echo "ws: could not find website-searcher CLI. Checked:"
+echo "$CANDIDATES" | sed 's/^/ - /'
+exit 1
+
+
