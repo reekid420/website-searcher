@@ -1,39 +1,19 @@
-# Rust build output
+
+# Build output
 /target
-
-# Debug artifacts written by --debug
 /debug/
+dist
+dist-ssr
+node_modules
 
-# Local binaries (if built/copied to repo root)
+# Executables and binaries
 /website-searcher
 /website-searcher.exe
-/website_searcher
-/website_searcher.exe
+src-tauri/bin
+src-tauri/wix/bin
 
-# OS junk
-.DS_Store
-Thumbs.db
-
-# IDE/editor
-.vscode/
-.idea/
-
-# Env/config overrides
-.env
-.env.*
-.envrc
-docker-compose.override.yml
-*.local.yml
-
-# Logs & temp
-*.log
-*.tmp
-*.swp
-
-# Coverage (if generated locally)
+# Coverage and logs
 /coverage/
-
-
 logs
 *.log
 npm-debug.log*
@@ -42,16 +22,30 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Editor and IDE settings
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+.envrc
+
+# Docker and local config
+docker-compose.override.yml
+*.local.yml
 *.local
 
-# Todo2 - AI-powered task management directories
+# Temporary and swap files
+*.tmp
+*.swp
+
+# Cursor and todo files
 .cursor/rules/todo2-overview.mdc
 .cursor/rules/todo2.mdc
 .cursor/mcp.json
 .todo2/
-src-tauri/bin
-src-tauri/wix/bin
-!src-tauri/wix/bin/ws.cmd
