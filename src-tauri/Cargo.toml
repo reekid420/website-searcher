@@ -6,7 +6,7 @@ authors = ["reekid420"]
 license = "MIT"
 repository = "https://github.com/reekid420/website-searcher"
 edition = "2024"
-rust-version = "1.87.0"
+rust-version = "1.89"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

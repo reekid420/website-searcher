@@ -51,4 +51,4 @@ Notes:
 - Concurrency is capped to 3 (Tokio semaphore).
 - Results are sorted and deduplicated by `(site, url)`.
 - `gog-games` special-case: solver ignored; normal fetch + AJAX JSON/HTML fragment fallback; strict query/path filtering in both CLI and GUI.
-- Tauri dev: `cargo tauri dev` (runs `pnpm --dir gui dev`), build: `pnpm --dir gui build && cargo tauri build`.
+- Tauri dev: `cargo tauri dev` (runs `pnpm --dir gui dev`), build: `cargo tauri build`.

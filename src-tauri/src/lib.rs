@@ -41,12 +41,11 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
     let mut cf_url = args
         .cf_url
         .unwrap_or_else(|| "http://localhost:8191/v1".to_string());
-    if cf_url == "http://localhost:8191/v1" {
-        if let Ok(env_cf) = std::env::var("CF_URL") {
-            if !env_cf.trim().is_empty() {
-                cf_url = env_cf;
-            }
-        }
+    if cf_url == "http://localhost:8191/v1"
+        && let Ok(env_cf) = std::env::var("CF_URL")
+        && !env_cf.trim().is_empty()
+    {
+        cf_url = env_cf;
     }
 
     let normalized = query::normalize_query(&args.query);
@@ -182,8 +181,9 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
                     };
                     let mut page_results = parser::parse_results(&site, &html, &query);
                     // gog-games: try AJAX/JSON fragment fallbacks when DOM parse is empty
-                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
-                        if let Some(r) = fetch_gog_games_ajax_json(
+                    if page_results.is_empty()
+                        && site.name.eq_ignore_ascii_case("gog-games")
+                        && let Some(r) = fetch_gog_games_ajax_json(
                             &client,
                             &site,
                             &query,
@@ -192,20 +192,19 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
                             cookie_headers.clone(),
                         )
                         .await
-                        {
-                            if !r.is_empty() {
-                                page_results = r;
-                            }
-                        }
+                        && !r.is_empty()
+                    {
+                        page_results = r;
                     }
                     if site.name.eq_ignore_ascii_case("gog-games") {
                         filter_results_by_query_strict(&mut page_results, &query);
                     }
                     // csrin: Atom feed fallback
-                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("csrin") {
-                        if let Some(feed_results) = fetch_csrin_feed(&client, &site, &query).await {
-                            page_results = feed_results;
-                        }
+                    if page_results.is_empty()
+                        && site.name.eq_ignore_ascii_case("csrin")
+                        && let Some(feed_results) = fetch_csrin_feed(&client, &site, &query).await
+                    {
+                        page_results = feed_results;
                     }
                     results.extend(page_results);
                     if results.len() >= 5000 {
@@ -280,19 +279,19 @@ async fn fetch_csrin_feed(
     let ql = query.to_lowercase();
     let mut i = 0usize;
     let mut xml = body;
-    if let Some(pre_idx) = xml.find("<pre") {
-        if let Some(tag_end) = xml[pre_idx..].find('>') {
-            let content_start = pre_idx + tag_end + 1;
-            if let Some(close_rel) = xml[content_start..].find("</pre>") {
-                let content_end = content_start + close_rel;
-                let inner = &xml[content_start..content_end];
-                xml = inner
-                    .replace("&lt;", "<")
-                    .replace("&gt;", ">")
-                    .replace("&amp;", "&")
-                    .replace("&quot;", "\"")
-                    .replace("&#39;", "'");
-            }
+    if let Some(pre_idx) = xml.find("<pre")
+        && let Some(tag_end) = xml[pre_idx..].find('>')
+    {
+        let content_start = pre_idx + tag_end + 1;
+        if let Some(close_rel) = xml[content_start..].find("</pre>") {
+            let content_end = content_start + close_rel;
+            let inner = &xml[content_start..content_end];
+            xml = inner
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'");
         }
     }
     while let Some(tidx) = xml[i..].find("<entry>") {
@@ -305,19 +304,19 @@ async fn fetch_csrin_feed(
         let mut title = "";
         if let Some(t_open_rel) = entry.find("<title") {
             let after_tag_rel = entry[t_open_rel..].find('>').map(|p| t_open_rel + p + 1);
-            if let Some(content_start) = after_tag_rel {
-                if let Some(close_rel) = entry[content_start..].find("</title>") {
-                    let raw = &entry[content_start..content_start + close_rel];
-                    let raw = raw.trim();
-                    if let Some(inner) = raw.strip_prefix("<![CDATA[") {
-                        if let Some(inner2) = inner.strip_suffix("]]") {
-                            title = inner2.trim();
-                        } else {
-                            title = inner.trim();
-                        }
+            if let Some(content_start) = after_tag_rel
+                && let Some(close_rel) = entry[content_start..].find("</title>")
+            {
+                let raw = &entry[content_start..content_start + close_rel];
+                let raw = raw.trim();
+                if let Some(inner) = raw.strip_prefix("<![CDATA[") {
+                    if let Some(inner2) = inner.strip_suffix("]]") {
+                        title = inner2.trim();
                     } else {
-                        title = raw;
+                        title = inner.trim();
                     }
+                } else {
+                    title = raw;
                 }
             }
         }
@@ -361,10 +360,10 @@ async fn fetch_csrin_feed(
 
 async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Option<String> {
     // Allow tests/dev to inject HTML
-    if let Ok(fake) = std::env::var("CS_PLAYWRIGHT_HTML") {
-        if !fake.trim().is_empty() {
-            return Some(fake);
-        }
+    if let Ok(fake) = std::env::var("CS_PLAYWRIGHT_HTML")
+        && !fake.trim().is_empty()
+    {
+        return Some(fake);
     }
     let script = "../scripts/csrin_search.cjs";
     let mut cmd = tokio::process::Command::new("node");
@@ -373,10 +372,10 @@ async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Opt
     if let Some(c) = cookie {
         cmd.env("PLAYWRIGHT_COOKIE", c);
     }
-    if let Ok(p) = std::env::var("CSRIN_PAGES") {
-        if !p.trim().is_empty() {
-            cmd.env("CSRIN_PAGES", p);
-        }
+    if let Ok(p) = std::env::var("CSRIN_PAGES")
+        && !p.trim().is_empty()
+    {
+        cmd.env("CSRIN_PAGES", p);
     }
     cmd.stdin(Stdio::null());
     cmd.stderr(Stdio::inherit());

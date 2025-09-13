@@ -362,8 +362,8 @@ async fn main() -> Result<()> {
                 }
                 // If Playwright mode is used, do not fall back to solver-based listing fetches
                 // when we already have results. If empty, try feed fallback to get recent topics.
-                if results.is_empty() {
-                    if let Some(feed_results) = fetch_csrin_feed(
+                if results.is_empty()
+                    && let Some(feed_results) = fetch_csrin_feed(
                         &client,
                         &site,
                         &query,
@@ -373,9 +373,8 @@ async fn main() -> Result<()> {
                         debug,
                     )
                     .await
-                    {
-                        results = feed_results;
-                    }
+                {
+                    results = feed_results;
                 }
                 // Do not return early; allow common filtering/normalization/truncation below.
             }
@@ -429,8 +428,9 @@ async fn main() -> Result<()> {
                     }
                     let mut page_results = parse_results(&site, &html, &query);
                     // gog-games fallback: request AJAX JSON/fragment when DOM is empty
-                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
-                        match fetch_gog_games_ajax_json(
+                    if page_results.is_empty()
+                        && site.name.eq_ignore_ascii_case("gog-games")
+                        && let Some(r) = fetch_gog_games_ajax_json(
                             &client,
                             &site,
                             &query,
@@ -440,14 +440,14 @@ async fn main() -> Result<()> {
                             debug,
                         )
                         .await
-                        {
-                            Some(r) if !r.is_empty() => page_results = r,
-                            _ => {}
-                        }
+                        && !r.is_empty()
+                    {
+                        page_results = r;
                     }
                     // csrin fallback: parse Atom feed when page body is minimal or selectors miss
-                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("csrin") {
-                        match fetch_csrin_feed(
+                    if page_results.is_empty()
+                        && site.name.eq_ignore_ascii_case("csrin")
+                        && let Some(r) = fetch_csrin_feed(
                             &client,
                             &site,
                             &query,
@@ -457,10 +457,9 @@ async fn main() -> Result<()> {
                             debug,
                         )
                         .await
-                        {
-                            Some(r) if !r.is_empty() => page_results = r,
-                            _ => {}
-                        }
+                        && !r.is_empty()
+                    {
+                        page_results = r;
                     }
                     // Extra filtering for gog-games to avoid unrelated pages/cards
                     if site.name.eq_ignore_ascii_case("gog-games") {
@@ -816,10 +815,10 @@ fn run_live_tui(results: &[SearchResult]) -> anyhow::Result<()> {
                             state.select(Some(max));
                         }
                         event::KeyCode::Enter | event::KeyCode::Char('o') => {
-                            if let Some(i) = state.selected() {
-                                if let Some(Some(url)) = entry_urls.get(i) {
-                                    let _ = open_url(url);
-                                }
+                            if let Some(i) = state.selected()
+                                && let Some(Some(url)) = entry_urls.get(i)
+                            {
+                                let _ = open_url(url);
                             }
                         }
                         _ => {}
@@ -1017,19 +1016,19 @@ async fn fetch_csrin_feed(
     }
     // Some endpoints wrap Atom XML inside HTML <pre> with escaped entities; unwrap and decode
     let mut xml = body.clone();
-    if let Some(pre_idx) = xml.find("<pre") {
-        if let Some(tag_end) = xml[pre_idx..].find('>') {
-            let content_start = pre_idx + tag_end + 1;
-            if let Some(close_rel) = xml[content_start..].find("</pre>") {
-                let content_end = content_start + close_rel;
-                let inner = &xml[content_start..content_end];
-                xml = inner
-                    .replace("&lt;", "<")
-                    .replace("&gt;", ">")
-                    .replace("&amp;", "&")
-                    .replace("&quot;", "\"")
-                    .replace("&#39;", "'");
-            }
+    if let Some(pre_idx) = xml.find("<pre")
+        && let Some(tag_end) = xml[pre_idx..].find('>')
+    {
+        let content_start = pre_idx + tag_end + 1;
+        if let Some(close_rel) = xml[content_start..].find("</pre>") {
+            let content_end = content_start + close_rel;
+            let inner = &xml[content_start..content_end];
+            xml = inner
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'");
         }
     }
     if debug {
@@ -1051,20 +1050,20 @@ async fn fetch_csrin_feed(
         let mut title = "";
         if let Some(t_open_rel) = entry.find("<title") {
             let after_tag_rel = entry[t_open_rel..].find('>').map(|p| t_open_rel + p + 1);
-            if let Some(content_start) = after_tag_rel {
-                if let Some(close_rel) = entry[content_start..].find("</title>") {
-                    let raw = &entry[content_start..content_start + close_rel];
-                    let raw = raw.trim();
-                    // Unwrap CDATA if present
-                    if let Some(inner) = raw.strip_prefix("<![CDATA[") {
-                        if let Some(inner2) = inner.strip_suffix("]]>") {
-                            title = inner2.trim();
-                        } else {
-                            title = inner.trim();
-                        }
+            if let Some(content_start) = after_tag_rel
+                && let Some(close_rel) = entry[content_start..].find("</title>")
+            {
+                let raw = &entry[content_start..content_start + close_rel];
+                let raw = raw.trim();
+                // Unwrap CDATA if present
+                if let Some(inner) = raw.strip_prefix("<![CDATA[") {
+                    if let Some(inner2) = inner.strip_suffix("]]>") {
+                        title = inner2.trim();
                     } else {
-                        title = raw;
+                        title = inner.trim();
                     }
+                } else {
+                    title = raw;
                 }
             }
         }
@@ -1109,10 +1108,10 @@ async fn fetch_csrin_feed(
 // Spawn Node + Playwright helper to fetch rendered HTML for cs.rin search
 async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Option<String> {
     // Test/CI fast path: if CS_PLAYWRIGHT_HTML is provided, return it without spawning Node
-    if let Ok(fake) = std::env::var("CS_PLAYWRIGHT_HTML") {
-        if !fake.trim().is_empty() {
-            return Some(fake);
-        }
+    if let Ok(fake) = std::env::var("CS_PLAYWRIGHT_HTML")
+        && !fake.trim().is_empty()
+    {
+        return Some(fake);
     }
     let script = "../../scripts/csrin_search.cjs";
     let mut cmd = Command::new("node");
@@ -1121,10 +1120,10 @@ async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Opt
         cmd.env("PLAYWRIGHT_COOKIE", c);
     }
     // Allow page count override from CLI pages setting via env
-    if let Ok(p) = std::env::var("CSRIN_PAGES") {
-        if !p.trim().is_empty() {
-            cmd.env("CSRIN_PAGES", p);
-        }
+    if let Ok(p) = std::env::var("CSRIN_PAGES")
+        && !p.trim().is_empty()
+    {
+        cmd.env("CSRIN_PAGES", p);
     }
     cmd.stdin(Stdio::null());
     cmd.stderr(Stdio::inherit());

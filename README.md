@@ -144,3 +144,24 @@ Remove-Item -Force -ErrorAction SilentlyContinue debug\*.html
 - To avoid color codes in assertions, tests set `NO_COLOR=1`.
 
 
+### Coverage (Rust workspace)
+
+You can generate coverage across `crates/core`, `crates/cli`, and `src-tauri` using LLVM source-based coverage. Install the tool once:
+
+```bash
+cargo install cargo-llvm-cov
+```
+
+Run coverage (HTML report will open location in the output):
+
+```bash
+# From the repo root
+cargo llvm-cov --workspace --exclude examples --html
+```
+
+Tips:
+- On Windows, ensure LLVM tools are available via the installed `cargo-llvm-cov`; MSVC toolchain is supported.
+- If you only want a quick summary without HTML: `cargo llvm-cov --workspace --summary-only`.
+- Linux users may optionally use tarpaulin: `cargo install cargo-tarpaulin && cargo tarpaulin --out Html` (Linux-only).
+
+

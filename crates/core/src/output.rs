@@ -23,10 +23,10 @@ pub fn print_pretty_json(results: &[SearchResult]) {
     });
     match serde_json::to_string_pretty(&value) {
         Ok(s) => match s.to_colored_json_auto() {
-            Ok(cs) => println!("{}", cs),
-            Err(_) => println!("{}", s),
+            Ok(cs) => println!("{cs}"),
+            Err(_) => println!("{s}"),
         },
-        Err(e) => eprintln!("failed to serialize results: {}", e),
+        Err(e) => eprintln!("failed to serialize results: {e}"),
     }
 }
 
@@ -62,14 +62,14 @@ pub fn print_table_grouped(results: &[SearchResult]) {
         }
         let mut table = Table::new(rows.clone());
         table.with(Style::rounded());
-        println!("{}:", site);
+        println!("{site}:");
         if std::env::var("NO_TABLE").ok().as_deref() == Some("1") {
             for r in rows.iter() {
                 println!("  - {} ({})", r.title, r.url);
             }
             println!();
         } else {
-            println!("{}\n", table);
+            println!("{table}\n");
         }
     }
 }

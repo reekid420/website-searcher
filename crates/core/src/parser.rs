@@ -25,16 +25,16 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
                 if !is_http {
                     let base = site.base_url.trim_end_matches('/');
                     if url.starts_with('/') {
-                        url = format!("{}{}", base, url);
+                        url = format!("{base}{url}");
                     } else {
                         url = format!("{}/{}", base, url.trim_start_matches('/'));
                     }
                 }
                 let mut title = a.text().collect::<String>().trim().to_string();
-                if title.is_empty() {
-                    if let Some(derived) = derive_title_from_href(&url) {
-                        title = derived;
-                    }
+                if title.is_empty()
+                    && let Some(derived) = derive_title_from_href(&url)
+                {
+                    title = derived;
                 }
                 if !title.is_empty() {
                     out.push(SearchResult {
@@ -77,7 +77,7 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
                 if !is_http {
                     let base = site.base_url.trim_end_matches('/');
                     if url.starts_with('/') {
-                        url = format!("{}{}", base, url);
+                        url = format!("{base}{url}");
                     } else if url.starts_with('#') {
                         url = format!("{}{}", site.base_url, url);
                     } else {
@@ -179,7 +179,7 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
             if is_relative {
                 let base = site.base_url.trim_end_matches('/');
                 if href.starts_with('/') {
-                    url = format!("{}{}", base, href);
+                    url = format!("{base}{href}");
                 } else if href.starts_with('#') {
                     url = format!("{}{}", site.base_url, href);
                 } else {
@@ -347,7 +347,7 @@ fn parse_elamigos(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchResul
             {
                 let base = site.base_url.trim_end_matches('/');
                 if href.starts_with('/') {
-                    url = format!("{}{}", base, href);
+                    url = format!("{base}{href}");
                 } else {
                     url = format!("{}/{}", base, href.trim_start_matches('/'));
                 }

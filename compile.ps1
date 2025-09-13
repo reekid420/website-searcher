@@ -64,7 +64,15 @@ function Invoke-Build {
 
     Invoke-Step "Clippy" { cargo clippy --all-targets -- -D warnings }
     Invoke-Step "Build CLI (debug)" { cargo build -p website-searcher }
-    Invoke-Step "Tests" { cargo test --locked --workspace }
+    Invoke-Step "Tests" {
+        $nextest = Get-Command cargo-nextest -ErrorAction SilentlyContinue
+        if ($null -eq $nextest) {
+            Write-Host "Nextest not found, falling back to cargo test"
+            cargo test --locked --workspace
+        } else {
+            cargo nextest run --locked --workspace
+        }
+    }
     Invoke-Step "Audit" { try { cargo audit } catch { Write-Host "cargo audit failed, continuing..." } }
     Invoke-Step "Build workspace (release)" { cargo build --workspace --release }
 
