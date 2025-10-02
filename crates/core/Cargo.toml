@@ -18,9 +18,9 @@ anyhow = "1.0"
 thiserror = "2.0.16"
 urlencoding = "2.1"
 serde_urlencoded = "0.7"
-tabled = "0.14"
+tabled = "0.20.0"
 textwrap = "0.16"
-terminal_size = "0.3"
+terminal_size = "0.4.3"
 
 [dev-dependencies]
 mockito = "1.4"

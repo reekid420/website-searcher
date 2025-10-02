@@ -1,16 +1,18 @@
 {
+	"$schema": "C:/Users/Charl/.cursor/extensions/anysphere.remote-containers-1.0.24/resources/schemas/devContainer.schema.json",
 	"name": "website-searcher-dev",
-	"dockerComposeFile": [
-		"../docker-compose.yml"
-	],
-	"service": "app",
-	"shutdownAction": "stopCompose",
+	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
 	"workspaceFolder": "/workspace",
+	"workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+	"postCreateCommand": "bash -lc 'chmod +x ./quickstart.sh ./compile.sh || true; ./quickstart.sh && ./compile.sh'",
+	"remoteUser": "vscode",
 	"customizations": {
 		"vscode": {
 			"extensions": [
 				"rust-lang.rust-analyzer",
-				"tamasfe.even-better-toml"
+				"tamasfe.even-better-toml",
+				"fill-labs.dependi",
+				"todo2.todo2"
 			]
 		}
 	}

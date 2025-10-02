@@ -4,7 +4,13 @@
 
 set -e
 
+# Prefer PATH if available
+if command -v website-searcher >/dev/null 2>&1; then
+  exec website-searcher "$@"
+fi
+
 CANDIDATES="
+/usr/bin/website-searcher
 /opt/website-searcher/website-searcher
 /opt/website-searcher/bin/website-searcher
 /Applications/website-searcher.app/Contents/MacOS/website-searcher

@@ -14,7 +14,7 @@ function Test-Command([string]$name) {
 
 function Ensure-PathRefresh() {
     $cargoBin = Join-Path $HOME ".cargo\bin"
-    if (Test-Path $cargoBin -and ($env:PATH -split ';') -notcontains $cargoBin) {
+    if ((Test-Path $cargoBin) -and (($env:PATH -split ';') -notcontains $cargoBin)) {
         Write-Info "Adding $cargoBin to PATH for current session"
         $env:PATH = "$cargoBin;$env:PATH"
     }
@@ -76,9 +76,22 @@ function Ensure-RustComponents {
     try { rustup component add clippy  | Out-Null } catch { Write-Warn "clippy add failed" }
 }
 
-function Ensure-CargoTool([string]$display, [string]$checkCmd, [string]$installCrate, [string]$args = "") {
+function Ensure-CargoTool([string]$display, [object[]]$checkCmd, [string]$installCrate, [string]$args = "") {
     $needs = $false
-    try { & $checkCmd | Out-Null } catch { $needs = $true }
+    try {
+        if ($checkCmd -is [System.Array] -and $checkCmd.Length -gt 0) {
+            $cmdName = [string]$checkCmd[0]
+            $cmdArgs = @()
+            if ($checkCmd.Length -gt 1) { $cmdArgs = $checkCmd[1..($checkCmd.Length - 1)] }
+            if ($cmdArgs.Count -gt 0) {
+                & $cmdName @cmdArgs | Out-Null
+            } else {
+                & $cmdName | Out-Null
+            }
+        } else {
+            & $checkCmd | Out-Null
+        }
+    } catch { $needs = $true }
     if ($needs) {
         if (-not (Test-Command cargo)) {
             Write-Warn "$display requires Cargo; skipping (Cargo not found)"
@@ -92,7 +105,7 @@ function Ensure-CargoTool([string]$display, [string]$checkCmd, [string]$installC
                 cargo install $installCrate $args
             }
         } catch {
-            Write-Warn "Failed to install $display: $($_.Exception.Message)"
+            Write-Warn "Failed to install ${display}: $($_.Exception.Message)"
         }
     }
 }
@@ -107,11 +120,11 @@ Ensure-PathRefresh
 Ensure-RustComponents
 
 # Cargo tools used by scripts/build/tests
-Ensure-CargoTool -display "Tauri CLI"      -checkCmd "cargo","tauri","--version"   -installCrate "tauri-cli" -args "--locked"
-Ensure-CargoTool -display "cargo-audit"    -checkCmd "cargo","audit","-V"         -installCrate "cargo-audit"
-Ensure-CargoTool -display "cargo-nextest"  -checkCmd "cargo","nextest","--version" -installCrate "cargo-nextest"
+Ensure-CargoTool -display "Tauri CLI"      -checkCmd "cargo","tauri","--version"     -installCrate "tauri-cli" -args "--locked"
+Ensure-CargoTool -display "cargo-audit"    -checkCmd "cargo","audit","-V"           -installCrate "cargo-audit"
+Ensure-CargoTool -display "cargo-nextest"  -checkCmd "cargo","nextest","--version"   -installCrate "cargo-nextest"
 if ($InstallCoverage -or $true) {
-    Ensure-CargoTool -display "cargo-llvm-cov" -checkCmd "cargo-llvm-cov","--version" -installCrate "cargo-llvm-cov"
+    Ensure-CargoTool -display "cargo-llvm-cov" -checkCmd "cargo","llvm-cov","--version" -installCrate "cargo-llvm-cov"
 }
 
 # Final report
@@ -123,7 +136,7 @@ if (Test-Command rustc) { Write-Host ("rustc   : " + (rustc -V)) }
 try { cargo tauri --version | ForEach-Object { Write-Host ("tauri   : " + $_) } } catch {}
 try { cargo audit -V       | ForEach-Object { Write-Host ("audit   : " + $_) } } catch {}
 try { cargo nextest --version | ForEach-Object { Write-Host ("nextest : " + $_) } } catch {}
-try { cargo-llvm-cov --version | ForEach-Object { Write-Host ("llvm-cov: " + $_) } } catch {}
+try { cargo llvm-cov --version | ForEach-Object { Write-Host ("llvm-cov: " + $_) } } catch {}
 
 Write-Host ""; Write-Info "Quickstart complete. You can now run ./compile.ps1"
 

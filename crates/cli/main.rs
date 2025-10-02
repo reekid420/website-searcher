@@ -683,7 +683,7 @@ fn run_live_tui(results: &[SearchResult]) -> anyhow::Result<()> {
     let mut should_quit = false;
     while !should_quit {
         terminal.draw(|f| {
-            let area = f.size();
+            let area = f.area();
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(1), Constraint::Length(1)])

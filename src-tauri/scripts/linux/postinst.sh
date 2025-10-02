@@ -1,11 +1,15 @@
 #!/bin/sh
 set -e
 
-# Create ws symlink pointing to the installed website-searcher binary
-CLI="/opt/website-searcher/bin/website-searcher"
-[ -x "$CLI" ] || CLI="/opt/website-searcher/website-searcher"
+# Ensure ws and website-searcher are available on PATH via /usr/local/bin symlinks
+# Prefer system-installed CLI under /usr/bin, fallback to /opt paths
+CLI="/usr/bin/website-searcher"
+if [ ! -x "$CLI" ]; then
+  CLI="/opt/website-searcher/bin/website-searcher"
+  [ -x "$CLI" ] || CLI="/opt/website-searcher/website-searcher"
+fi
 
-if [ -x "$CLI" ]; then
+if [ -n "$CLI" ] && [ -x "$CLI" ]; then
   ln -sf "$CLI" /usr/local/bin/website-searcher || true
   ln -sf "$CLI" /usr/local/bin/ws || true
 fi
