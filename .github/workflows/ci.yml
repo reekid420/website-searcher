@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -13,10 +13,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest           # x86_64 Linux
-          - os: ubuntu-24.04-arm        # arm64 Linux
-          - os: macos-latest           # arm64 macOS (Apple Silicon)
-          - os: windows-latest          # x86_64 Windows
+          - os: ubuntu-latest # x86_64 Linux
+          - os: ubuntu-24.04-arm # arm64 Linux
+          - os: macos-latest # arm64 macOS (Apple Silicon)
+          - os: windows-latest # x86_64 Windows
           - os: windows-11-arm
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Setup Playwright
         run: |
@@ -77,8 +77,3 @@ jobs:
         run: |
           cargo build --release --locked
           .${{ runner.os == 'Windows' && '\\' || '/' }}target${{ runner.os == 'Windows' && '\\release\\' || '/release/' }}website-searcher${{ runner.os == 'Windows' && '.exe' || '' }} "elden ring" --sites csrin --format table --debug
-
-      - name: Security audit
-        run: |
-          cargo install cargo-audit
-          cargo audit

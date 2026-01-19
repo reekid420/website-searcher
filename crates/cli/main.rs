@@ -17,6 +17,7 @@ use reqwest::header::{
     ACCEPT, COOKIE, HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, REFERER,
 };
 use serde_json::Value;
+use std::io::IsTerminal;
 use std::io::stdout;
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
@@ -117,7 +118,7 @@ async fn main() -> Result<()> {
         None => {
             println!("Website Searcher (interactive)\n");
             // Prefer TUI prompt when attached to a TTY; fall back to stdin prompt otherwise
-            if atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout) {
+            if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
                 let ans = inquire::Text::new("Search phrase:")
                     .with_placeholder("e.g., elden ring")
                     .prompt();
@@ -157,7 +158,7 @@ async fn main() -> Result<()> {
 
     // Interactive site selection only when no --sites provided and interactive mode
     let interactive_selection: Option<Vec<String>> = if cli.sites.is_none() && cli.query.is_none() {
-        if atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout) {
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
             // First ask if the user wants to search ALL sites (faster flow)
             match inquire::Confirm::new("Search all sites?")
                 .with_default(true)
@@ -584,7 +585,7 @@ async fn main() -> Result<()> {
     // Keep TUI only for interactive mode (no query provided). If user explicitly passes
     // --format table with a query, print classic table output instead of TUI.
     let interactive_tui =
-        cli.query.is_none() && atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout);
+        cli.query.is_none() && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     if interactive_tui && matches!(out_format, OutputFormat::Table) {
         run_live_tui(&combined)?;
     } else {
