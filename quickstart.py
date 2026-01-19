@@ -109,7 +109,7 @@ def install_build_tools() -> None:
             subprocess.run([
                 "sudo", "pacman", "-Sy", "--noconfirm",
                 "base-devel", "pkg-config", "openssl",
-                "gtk3", "webkit2gtk", "libappindicator-gtk3", "librsvg"
+                "gtk3", "webkit2gtk-4.1", "libappindicator-gtk3", "librsvg"
             ], check=False)
 
 def install_node() -> None:

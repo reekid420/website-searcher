@@ -3,13 +3,15 @@
 Cross-platform compile script for building the project.
 Replaces compile.ps1 and compile.sh.
 
-Usage: python compile.py [-v|--verbose] [-l|--log] [-d|--deb] [-r|--rpm]
+Usage: python compile.py [-v|--verbose] [-l|--log] [-d|--deb] [-r|--rpm] [-p|--pacman] [--nogui]
 
 Options:
     -v, --verbose   Show full command output
     -l, --log       Enable logging to timestamped file (always shows in terminal too)
     -d, --deb       Force .deb bundle (Linux only)
     -r, --rpm       Force .rpm bundle (Linux only)
+    -p, --pacman    Build Arch Linux .pkg.tar.zst package
+    --nogui         Exclude GUI from Arch package (GUI included by default)
 """
 from __future__ import annotations
 
@@ -179,6 +181,113 @@ def get_distro_info() -> dict:
                 key, _, value = line.partition("=")
                 info_dict[key] = value.strip('"')
     return info_dict
+
+def is_arch_based() -> bool:
+    """Detect if running on Arch Linux or a derivative."""
+    if platform.system() != "Linux":
+        return False
+    distro = get_distro_info()
+    distro_id = distro.get("ID", "").lower()
+    distro_like = distro.get("ID_LIKE", "").lower()
+    
+    arch_ids = {"arch", "manjaro", "endeavouros", "garuda", "artix", "arcolinux", "archcraft"}
+    if distro_id in arch_ids:
+        return True
+    if "arch" in distro_like:
+        return True
+    return False
+
+def generate_pkgbuild(version: str = "0.1.0", include_gui: bool = False) -> Path:
+    """Generate PKGBUILD file for building Arch package."""
+    # Use absolute paths since makepkg creates a src/ subdir
+    project_root = Path.cwd().resolve()
+    cli_binary_path = project_root / "target" / "release" / "website-searcher"
+    gui_binary_path = project_root / "target" / "release" / "website-searcher-gui"
+    license_path = project_root / "LICENSE"
+    ws_script_path = project_root / "scripts" / "ws"
+    
+    # Build the package() function contents
+    install_commands = f'''    # Install CLI binary
+    install -Dm755 "{cli_binary_path}" "$pkgdir/usr/bin/website-searcher"
+    ln -s website-searcher "$pkgdir/usr/bin/websearcher"
+    
+    # Install ws alias script
+    if [ -f "{ws_script_path}" ]; then
+        install -Dm755 "{ws_script_path}" "$pkgdir/usr/bin/ws"
+    fi'''
+    
+    if include_gui:
+        install_commands += f'''
+    
+    # Install GUI binary
+    if [ -f "{gui_binary_path}" ]; then
+        install -Dm755 "{gui_binary_path}" "$pkgdir/usr/bin/website-searcher-gui"
+    fi'''
+    
+    install_commands += f'''
+    
+    # Install license
+    if [ -f "{license_path}" ]; then
+        install -Dm644 "{license_path}" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    fi'''
+    
+    provides = "'website-searcher' 'websearcher' 'ws'"
+    if include_gui:
+        provides += " 'website-searcher-gui'"
+    
+    pkgbuild_content = f'''# Maintainer: Auto-generated
+pkgname=website-searcher
+pkgver={version.replace('-', '_')}
+pkgrel=1
+pkgdesc="Cross-platform CLI that queries multiple game-download sites"
+arch=('x86_64')
+url="https://github.com/reekid420/website-searcher"
+license=('MIT')
+depends=('glibc' 'openssl' 'gtk3' 'webkit2gtk-4.1')
+provides=({provides})
+source=()
+
+package() {{
+{install_commands}
+}}
+'''
+    pkg_dir = Path("pkg")
+    pkg_dir.mkdir(exist_ok=True)
+    pkgbuild_path = pkg_dir / "PKGBUILD"
+    pkgbuild_path.write_text(pkgbuild_content)
+    return pkgbuild_path
+
+def build_pacman_package(include_gui: bool = False) -> None:
+    """Build Arch Linux package using makepkg."""
+    step("Build Arch Linux package")
+    
+    if not command_exists("makepkg"):
+        print_and_log(f"{YELLOW}makepkg not found; skipping Arch package build{RESET}")
+        return
+    
+    # Check that binary exists
+    binary = Path("target/release/website-searcher")
+    if not binary.exists():
+        print_and_log(f"{RED}Release binary not found; build CLI first{RESET}")
+        return
+    
+    # Generate PKGBUILD  
+    pkgbuild = generate_pkgbuild(include_gui=include_gui)
+    print_and_log(f"Generated: {pkgbuild}")
+    if not include_gui:
+        print_and_log("Excluding GUI binary from package (--nogui)")
+    
+    # Run makepkg
+    try:
+        run_cmd(["makepkg", "-sf", "--noconfirm"], cwd="pkg")
+        
+        # Find built package
+        pkg_files = list(Path("pkg").glob("*.pkg.tar.zst"))
+        if pkg_files:
+            print_and_log(f"{GREEN}Arch package built: {pkg_files[0]}{RESET}")
+            print_and_log(f"Install with: sudo pacman -U {pkg_files[0]}")
+    except subprocess.CalledProcessError as e:
+        print_and_log(f"{YELLOW}makepkg failed: {e}{RESET}")
 
 def ensure_cargo_in_path() -> None:
     """Add cargo bin to PATH if not already present."""
@@ -489,6 +598,8 @@ def main() -> int:
     parser.add_argument("-l", "--log", action="store_true", help="Enable logging to file")
     parser.add_argument("-d", "--deb", action="store_true", help="Force .deb bundle (Linux)")
     parser.add_argument("-r", "--rpm", action="store_true", help="Force .rpm bundle (Linux)")
+    parser.add_argument("-p", "--pacman", action="store_true", help="Build Arch Linux .pkg.tar.zst package")
+    parser.add_argument("--nogui", action="store_true", help="Exclude GUI from Arch package")
     args = parser.parse_args()
     
     VERBOSE = args.verbose
@@ -531,6 +642,10 @@ def main() -> int:
         
         # Tauri build
         build_tauri(want_deb=args.deb, want_rpm=args.rpm)
+        
+        # Build Arch package if requested or auto-detected
+        if args.pacman or is_arch_based():
+            build_pacman_package(include_gui=not args.nogui)
         
         print_and_log(f"\n{GREEN}Build complete!{RESET}")
         return 0

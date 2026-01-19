@@ -1,30 +1,51 @@
 #!/bin/sh
 
-# Wrapper alias for website-searcher CLI installed by the GUI bundle
+# Wrapper alias for website-searcher CLI/GUI installed by the bundle
+# Use --gui or -g to launch the GUI instead of CLI
 
 set -e
 
+# Check for --gui or -g flag
+launch_gui=false
+remaining_args=""
+for arg in "$@"; do
+  case "$arg" in
+    --gui|-g)
+      launch_gui=true
+      ;;
+    *)
+      remaining_args="$remaining_args $arg"
+      ;;
+  esac
+done
+
+if [ "$launch_gui" = true ]; then
+  # Launch GUI
+  BINARY_NAME="website-searcher-gui"
+else
+  # Launch CLI
+  BINARY_NAME="website-searcher"
+fi
+
 # Prefer PATH if available
-if command -v website-searcher >/dev/null 2>&1; then
-  exec website-searcher "$@"
+if command -v "$BINARY_NAME" >/dev/null 2>&1; then
+  exec "$BINARY_NAME" $remaining_args
 fi
 
 CANDIDATES="
-/usr/bin/website-searcher
-/opt/website-searcher/website-searcher
-/opt/website-searcher/bin/website-searcher
-/Applications/website-searcher.app/Contents/MacOS/website-searcher
-$(dirname "$0")/website-searcher
+/usr/bin/$BINARY_NAME
+/opt/website-searcher/$BINARY_NAME
+/opt/website-searcher/bin/$BINARY_NAME
+/Applications/website-searcher.app/Contents/MacOS/$BINARY_NAME
+$(dirname "$0")/$BINARY_NAME
 "
 
 for f in $CANDIDATES; do
   if [ -x "$f" ]; then
-    exec "$f" "$@"
+    exec "$f" $remaining_args
   fi
 done
 
-echo "ws: could not find website-searcher CLI. Checked:"
+echo "ws: could not find $BINARY_NAME. Checked:"
 echo "$CANDIDATES" | sed 's/^/ - /'
 exit 1
-
-

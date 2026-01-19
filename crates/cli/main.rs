@@ -102,16 +102,6 @@ struct Cli {
     #[arg(long)]
     cookie: Option<String>,
 
-    /// Number of cs.rin forum pages to scan (ListingPage). Each page adds start+=100.
-    /// Small default to avoid heavy crawling; increase when you need more.
-    #[arg(long, default_value_t = 1)]
-    csrin_pages: usize,
-
-    /// Use cs.rin phpBB search endpoint instead of listing pages/feed.
-    /// Example builds: search.php?keywords=elden+ring&fid%5B%5D=10&sr=topics
-    #[arg(long, default_value_t = false)]
-    csrin_search: bool,
-
     /// Disable Playwright fallback for cs.rin.ru (forces non-PW backups only)
     #[arg(long, default_value_t = false)]
     no_playwright: bool,
@@ -297,8 +287,7 @@ async fn main() -> Result<()> {
         let use_cf = !cli.no_cf;
         let cf_url = resolved_cf_url.clone();
         let cookie_headers = cookie_headers.clone();
-        let csrin_pages = cli.csrin_pages;
-        let csrin_search = cli.csrin_search;
+
         let no_playwright = cli.no_playwright;
         tasks.push(tokio::spawn(async move {
             let _permit = permit; // hold until task end
@@ -307,30 +296,8 @@ async fn main() -> Result<()> {
                 SearchKind::PhpBBSearch => build_search_url(&site, &query), // Uses search.php URL
                 _ => build_search_url(&site, &query),
             };
-            // Build per-page URLs for csrin: primary is search URL, with listing pages as fallback
-            let page_urls: Vec<String> = if site.name.eq_ignore_ascii_case("csrin") {
-                // PhpBBSearch: use the search URL directly (build_search_url now handles it)
-                // csrin_search flag is now deprecated since PhpBBSearch is the default
-                if matches!(site.search_kind, SearchKind::PhpBBSearch) {
-                    vec![base_url.clone()]
-                } else {
-                    // Legacy ListingPage mode with pagination
-                    let mut urls = Vec::new();
-                    let pages = csrin_pages.max(1);
-                    urls.push(base_url.clone());
-                    for i in 1..pages {
-                        let start = i * 100;
-                        if base_url.contains('?') {
-                            urls.push(format!("{}&start={}", base_url, start));
-                        } else {
-                            urls.push(format!("{}?start={}", base_url, start));
-                        }
-                    }
-                    urls
-                }
-            } else {
-                vec![base_url.clone()]
-            };
+            // Build page URLs: for most sites, just one URL. csrin uses PhpBBSearch URL directly.
+            let page_urls: Vec<String> = vec![base_url.clone()];
 
             let mut results: Vec<SearchResult> = Vec::new();
             // If requested, try Playwright to load dynamic results (skip when solver is explicitly configured/local)

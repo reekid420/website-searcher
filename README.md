@@ -43,9 +43,6 @@ websearcher "cyberpunk" --sites gog-games --format table --cookie "cf_clearance=
 # cs.rin.ru via Playwright (auto by default). Use --no-playwright to force non-PW fallbacks
 # Requires Node + Playwright locally, or use docker-compose 'playwright' service
 websearcher "elden ring" --sites csrin --format table --debug --no-cf
-# Optional: number of listing pages to scan when search is rate-limited
-set CSRIN_PAGES=2   # Windows
-export CSRIN_PAGES=2 # macOS/Linux
 ```
 
 Flags:
@@ -78,6 +75,28 @@ Interactive mode:
 - MSI bundling uses a custom WiX template that installs the CLI into `INSTALLDIR\bin`, adds it to `PATH`, and deploys a `ws.cmd` alias.
 - The build script `compile.ps1` will attempt `cargo tauri build`. If the WiX link step fails, it automatically falls back to manually linking the MSI using the locally installed WiX tools (candle/light).
 - Ensure WiX tools are present locally (Tauri caches them under `%LOCALAPPDATA%\tauri\WixTools*`).
+
+#### Arch Linux / Manjaro packaging
+
+On Arch-based distributions, the compile script auto-detects and builds a `.pkg.tar.zst` package:
+
+```bash
+python compile.py                    # Auto-detects Arch, builds with CLI + GUI
+python compile.py --pacman           # Force pacman package build
+python compile.py --pacman --nogui   # Build without GUI binary
+```
+
+The package includes:
+- `website-searcher` - CLI binary
+- `websearcher` - symlink alias
+- `ws` - short alias script (use `ws --gui` to launch GUI)
+- `website-searcher-gui` - GUI binary (excluded with `--nogui`)
+
+Install the resulting package:
+```bash
+sudo pacman -U pkg/website-searcher-*.pkg.tar.zst
+```
+
 
 ### Docker / Devcontainer
 
