@@ -136,8 +136,8 @@ pub fn site_configs() -> Vec<SiteConfig> {
         SiteConfig {
             name: "csrin",
             base_url: "https://cs.rin.ru/forum/",
-            search_kind: SearchKind::ListingPage,
-            query_param: None,
+            search_kind: SearchKind::PhpBBSearch,
+            query_param: Some("keywords"),
             listing_path: Some("https://cs.rin.ru/forum/viewforum.php?f=10"),
             // phpBB topics typically use a.topictitle; also match relative viewtopic links
             result_selector: "a.topictitle, a[href^='viewtopic.php']",
@@ -146,6 +146,32 @@ pub fn site_configs() -> Vec<SiteConfig> {
             requires_js: false,
             // Blacklist csrin from FlareSolverr by default; enable during tests to keep mocks working
             requires_cloudflare: cfg!(test),
+        },
+        // 12. nswpedia.com – Nintendo Switch ROMs, WordPress ?s= search
+        SiteConfig {
+            name: "nswpedia",
+            base_url: "https://nswpedia.com/",
+            search_kind: SearchKind::QueryParam,
+            query_param: Some("s"),
+            listing_path: None,
+            result_selector: "h2 a, article h2 a, .post-title a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        },
+        // 13. f95zone.to – Adult games forum, listing-page approach (search requires auth)
+        SiteConfig {
+            name: "f95zone",
+            base_url: "https://f95zone.to/",
+            search_kind: SearchKind::ListingPage,
+            query_param: None,
+            listing_path: Some("https://f95zone.to/forums/games.2/"),
+            result_selector: "a[href*='/threads/']",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
         },
     ]
 }

@@ -19,6 +19,14 @@ pub fn build_search_url(site: &SiteConfig, query: &str) -> String {
         }
         SearchKind::FrontPage => site.base_url.to_string(),
         SearchKind::ListingPage => site.base_url.to_string(),
+        SearchKind::PhpBBSearch => {
+            // phpBB forum search: search.php?keywords=...&fid[]=10&sr=topics&sf=firstpost
+            let encoded = urlencoding::encode(query);
+            format!(
+                "{}search.php?keywords={}&fid%5B%5D=10&sr=topics&sf=firstpost",
+                site.base_url, encoded
+            )
+        }
     }
 }
 
@@ -109,5 +117,27 @@ mod tests {
         };
         let url = build_search_url(&cfg, &normalize_query("anything"));
         assert_eq!(url, "https://list.example/");
+    }
+
+    #[test]
+    fn build_phpbbsearch_creates_forum_search_url() {
+        let cfg = SiteConfig {
+            name: "csrin",
+            base_url: "https://cs.rin.ru/forum/",
+            search_kind: SearchKind::PhpBBSearch,
+            query_param: Some("keywords"),
+            listing_path: Some("https://cs.rin.ru/forum/viewforum.php?f=10"),
+            result_selector: "a.topictitle",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let url = build_search_url(&cfg, &normalize_query("elden ring"));
+        assert!(url.starts_with("https://cs.rin.ru/forum/search.php?"));
+        assert!(url.contains("keywords=elden%20ring"));
+        assert!(url.contains("fid%5B%5D=10"));
+        assert!(url.contains("sr=topics"));
+        assert!(url.contains("sf=firstpost"));
     }
 }

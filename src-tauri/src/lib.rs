@@ -226,6 +226,13 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
                     }
                 }
             }
+            // Filter csrin results: only keep viewtopic.php links with title matching query
+            // This removes sticky posts like "FAQ", "Forum rules", "Donations", etc.
+            if site.name.eq_ignore_ascii_case("csrin") {
+                let q_lower = query.to_lowercase();
+                results.retain(|r| r.url.contains("viewtopic.php"));
+                results.retain(|r| r.title.to_lowercase().contains(&q_lower));
+            }
             // Truncate per-site
             if !results.is_empty() {
                 results.truncate(limit);

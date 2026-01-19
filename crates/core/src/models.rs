@@ -13,6 +13,8 @@ pub enum SearchKind {
     FrontPage,
     PathEncoded,
     ListingPage,
+    /// phpBB forum search with keywords, fid[], sr params (e.g., cs.rin.ru)
+    PhpBBSearch,
 }
 
 #[derive(Debug, Clone)]

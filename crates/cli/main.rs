@@ -304,25 +304,20 @@ async fn main() -> Result<()> {
             let _permit = permit; // hold until task end
             let base_url = match site.search_kind {
                 SearchKind::ListingPage => site.listing_path.unwrap_or(site.base_url).to_string(),
+                SearchKind::PhpBBSearch => build_search_url(&site, &query), // Uses search.php URL
                 _ => build_search_url(&site, &query),
             };
-            // Build per-page URLs for csrin using &start= offsets of 100; otherwise single URL
+            // Build per-page URLs for csrin: primary is search URL, with listing pages as fallback
             let page_urls: Vec<String> = if site.name.eq_ignore_ascii_case("csrin") {
-                let mut urls = Vec::new();
-                if csrin_search {
-                    let qenc = serde_urlencoded::to_string([
-                        ("keywords", query.as_str()),
-                        ("sr", "topics"),
-                    ])
-                    .unwrap_or_else(|_| format!("keywords={}&sr=topics", query.replace(' ', "+")));
-                    let search_base = "https://cs.rin.ru/forum/search.php";
-                    // limit search to forum id f=10
-                    urls.push(format!("{}?{}&fid%5B%5D=10", search_base, qenc));
+                // PhpBBSearch: use the search URL directly (build_search_url now handles it)
+                // csrin_search flag is now deprecated since PhpBBSearch is the default
+                if matches!(site.search_kind, SearchKind::PhpBBSearch) {
+                    vec![base_url.clone()]
                 } else {
+                    // Legacy ListingPage mode with pagination
+                    let mut urls = Vec::new();
                     let pages = csrin_pages.max(1);
-                    // First page uses base URL with no start parameter
                     urls.push(base_url.clone());
-                    // Subsequent pages start at 100, 200, ...
                     for i in 1..pages {
                         let start = i * 100;
                         if base_url.contains('?') {
@@ -331,8 +326,8 @@ async fn main() -> Result<()> {
                             urls.push(format!("{}?start={}", base_url, start));
                         }
                     }
+                    urls
                 }
-                urls
             } else {
                 vec![base_url.clone()]
             };
@@ -567,7 +562,7 @@ async fn main() -> Result<()> {
             }
             if matches!(
                 site.search_kind,
-                SearchKind::FrontPage | SearchKind::ListingPage
+                SearchKind::FrontPage | SearchKind::ListingPage | SearchKind::PhpBBSearch
             ) {
                 // csrin: keep only topic pages, and avoid URL-based query matches (phpBB adds
                 // hilit=<query> to every result link). Only keep titles that include the query.

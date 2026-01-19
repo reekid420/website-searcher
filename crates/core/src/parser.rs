@@ -54,6 +54,16 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
     if site.name.eq_ignore_ascii_case("elamigos") {
         return parse_elamigos(site, html, query);
     }
+
+    // Site-specific parser for f95zone: parse forum thread listings
+    if site.name.eq_ignore_ascii_case("f95zone") {
+        return parse_f95zone(site, html, query);
+    }
+
+    // Site-specific parser for nswpedia: filter WordPress search results
+    if site.name.eq_ignore_ascii_case("nswpedia") {
+        return parse_nswpedia(site, html, query);
+    }
     let document = Html::parse_document(html);
 
     // Primary: use provided selector
@@ -359,6 +369,159 @@ fn parse_elamigos(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchResul
                 title,
                 url,
             });
+        }
+    }
+
+    results
+}
+
+/// Parse F95zone forum thread listings
+/// Extracts game titles from thread links like [Game Name [vX.X] [Developer]]
+fn parse_f95zone(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchResult> {
+    let document = Html::parse_document(html);
+    let Ok(sel) = Selector::parse("a[href*='/threads/']") else {
+        return Vec::new();
+    };
+    let ql = query.to_lowercase();
+    let ql_parts: Vec<&str> = ql.split_whitespace().collect();
+    let mut results: Vec<SearchResult> = Vec::new();
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for a in document.select(&sel) {
+        let href = a.value().attr("href").unwrap_or("");
+        if href.is_empty() {
+            continue;
+        }
+
+        // Skip pagination, member links, and non-game thread links
+        if href.contains("/page-")
+            || href.contains("/members/")
+            || href.contains("/latest")
+            || href.contains("#")
+        {
+            continue;
+        }
+
+        let mut url = href.to_string();
+        // Build absolute URL
+        if !url.starts_with("http") {
+            url = format!("{}{}", site.base_url.trim_end_matches('/'), url);
+        }
+
+        // Deduplicate
+        if seen_urls.contains(&url) {
+            continue;
+        }
+
+        let title = a.text().collect::<String>().trim().to_string();
+        if title.is_empty() {
+            continue;
+        }
+
+        // Skip navigational text
+        let tl = title.to_lowercase();
+        if tl.len() < 3
+            || tl == "threads"
+            || tl == "games"
+            || tl.starts_with("page ")
+            || tl.parse::<u32>().is_ok()
+        {
+            continue;
+        }
+
+        // Check if query matches (all words must be present)
+        let matches = ql_parts.iter().all(|part| tl.contains(part));
+        if !matches {
+            continue;
+        }
+
+        seen_urls.insert(url.clone());
+        results.push(SearchResult {
+            site: site.name.to_string(),
+            title,
+            url,
+        });
+
+        if results.len() >= 50 {
+            break;
+        }
+    }
+
+    results
+}
+
+/// Parse NSWpedia WordPress search results
+/// Filters navigation links and extracts game titles
+fn parse_nswpedia(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchResult> {
+    let document = Html::parse_document(html);
+    // Match h2 elements that contain links (search result cards)
+    let Ok(sel) = Selector::parse("h2 a, article a, .post-title a") else {
+        return Vec::new();
+    };
+    let ql = query.to_lowercase();
+    let ql_parts: Vec<&str> = ql.split_whitespace().collect();
+    let mut results: Vec<SearchResult> = Vec::new();
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for a in document.select(&sel) {
+        let href = a.value().attr("href").unwrap_or("");
+        if href.is_empty() {
+            continue;
+        }
+
+        // Skip pagination, navigation, and category links
+        if href.contains("/page/")
+            || href.contains("/category/")
+            || href.contains("/tag/")
+            || href.contains("/badge/")
+            || href.contains("/tutorials/")
+            || href.contains("/about")
+            || href.contains("/contact")
+            || href.contains("/privacy")
+            || !href.contains("nswpedia.com")
+        {
+            continue;
+        }
+
+        let url = href.to_string();
+
+        // Deduplicate
+        if seen_urls.contains(&url) {
+            continue;
+        }
+
+        let title = a.text().collect::<String>().trim().to_string();
+        if title.is_empty() {
+            continue;
+        }
+
+        // Skip nav elements
+        let tl = title.to_lowercase();
+        if tl == "nswpedia.com"
+            || tl == "switch roms"
+            || tl == "exclusives"
+            || tl == "tutorials"
+            || tl == "more"
+            || tl == "home"
+        {
+            continue;
+        }
+
+        // Check if query matches
+        let matches = ql_parts.iter().all(|part| tl.contains(part));
+        if !matches {
+            continue;
+        }
+
+        seen_urls.insert(url.clone());
+        results.push(SearchResult {
+            site: site.name.to_string(),
+            title,
+            url,
+        });
+
+        if results.len() >= 50 {
+            break;
         }
     }
 

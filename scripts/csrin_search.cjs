@@ -51,6 +51,8 @@ const { chromium } = require('playwright');
 		try { await page.click('#overlayconfirmbtn', { timeout: 1000 }); } catch {}
 		await page.fill('input[name="keywords"]', query);
 		await page.selectOption('select[name="sr"]', { value: 'topics' });
+		// Use firstpost search field for better game thread matching
+		try { await page.selectOption('select[name="sf"]', { value: 'firstpost' }); } catch {}
 		await page.check('input[name="fid[]"][value="10"]');
 		await Promise.all([
 			page.click('input[name="submit"]'),
@@ -72,6 +74,7 @@ const { chromium } = require('playwright');
 			const params = new URLSearchParams();
 			params.set('keywords', query);
 			params.set('sr', 'topics');
+			params.set('sf', 'firstpost');  // Search first post only for better game thread matching
 			params.append('fid[]', '10');
 			const url = `https://cs.rin.ru/forum/search.php?${params.toString()}`;
 			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });

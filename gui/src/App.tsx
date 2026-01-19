@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import './App.css'
 import { invokeSearch, fetchSites, type SearchResult } from './api'
 
@@ -17,6 +17,30 @@ function App() {
   const [csrinSearch, setCsrinSearch] = useState<boolean>(false)
   const [noPlaywright, setNoPlaywright] = useState<boolean>(false)
   const [debug, setDebug] = useState<boolean>(false)
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
+
+  const copyToClipboard = useCallback(async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopiedUrl(url)
+      setTimeout(() => setCopiedUrl(null), 1500)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  }, [])
+
+  // Group results by site
+  const groupedResults = useMemo(() => {
+    const groups = new Map<string, { site: string; items: { title: string; url: string }[] }>()
+    for (const r of results) {
+      const key = r.site.toLowerCase()
+      if (!groups.has(key)) {
+        groups.set(key, { site: r.site, items: [] })
+      }
+      groups.get(key)!.items.push({ title: r.title, url: r.url })
+    }
+    return Array.from(groups.values())
+  }, [results])
 
   // Load site list once
   React.useEffect(() => {
@@ -123,10 +147,24 @@ function App() {
         </div>
       </div>
       {error && <p style={{ color: 'tomato' }}>{error}</p>}
-      <div style={{ marginTop: 16 }}>
-        {results.map((r, i) => (
-          <div key={`${r.site}-${i}`} style={{ marginBottom: 8 }}>
-            <strong>[{r.site}]</strong> {r.title} — <a href={r.url}>{r.url}</a>
+      <div className="results-container">
+        {groupedResults.map((group, i) => (
+          <div key={i} className="result-card">
+            <h3 className="result-title">{group.site}</h3>
+            <div className="result-links">
+              {group.items.map((item, j) => (
+                <div key={j} className="link-row">
+                  <span
+                    className="copy-link"
+                    onClick={() => copyToClipboard(item.url)}
+                    title="Click to copy"
+                  >
+                    {item.url}
+                    {copiedUrl === item.url && <span className="copied-toast">Copied!</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
         {results.length === 0 && !loading && <p>No results yet.</p>}
