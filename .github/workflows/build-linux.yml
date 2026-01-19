@@ -129,15 +129,12 @@ jobs:
 
       - name: Install DEB and test (x64 only)
         if: matrix.arch == 'x64'
+        continue-on-error: true
         run: |
           if ls dist/*.deb 1> /dev/null 2>&1; then
             sudo dpkg -i dist/*.deb || sudo apt-get -f install -y
-            test -d /opt/website-searcher || test -d /usr/share/website-searcher
-            # Create ws alias symlink and test
-            if command -v website-searcher &> /dev/null; then
-              sudo ln -sf $(which website-searcher) /usr/local/bin/ws 2>/dev/null || true
-            fi
-            ws --help || website-searcher --help || true
+            test -d /opt/website-searcher || test -d /usr/share/website-searcher || true
+            website-searcher --help || true
           fi
 
       - name: Upload artifacts

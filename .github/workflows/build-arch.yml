@@ -43,13 +43,11 @@ jobs:
 
       - name: Setup Rust
         run: |
-          rustup-init -y --default-toolchain stable
-          source ~/.cargo/env
+          rustup default stable
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build CLI (release)
         run: |
-          source ~/.cargo/env
           cargo build -p website-searcher --release
 
       - name: Generate PKGBUILD
