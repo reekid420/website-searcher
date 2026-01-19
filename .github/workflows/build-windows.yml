@@ -11,7 +11,8 @@ on:
     inputs:
       version:
         type: string
-        required: true
+        required: false
+        default: "1.0.0"
 
 permissions:
   contents: write

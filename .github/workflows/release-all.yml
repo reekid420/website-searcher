@@ -1,17 +1,66 @@
 name: release-all
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g., 1.0.0)"
+        required: false
+        default: "1.0.0"
+
+permissions:
+  contents: write
 
 jobs:
   linux:
     uses: ./.github/workflows/build-linux.yml
+    with:
+      version: ${{ inputs.version || '1.0.0' }}
     secrets: inherit
 
   macos:
     uses: ./.github/workflows/build-macos.yml
+    with:
+      version: ${{ inputs.version || '1.0.0' }}
     secrets: inherit
 
   windows:
     uses: ./.github/workflows/build-windows.yml
+    with:
+      version: ${{ inputs.version || '1.0.0' }}
     secrets: inherit
+
+  arch:
+    uses: ./.github/workflows/build-arch.yml
+    with:
+      version: ${{ inputs.version || '1.0.0' }}
+    secrets: inherit
+
+  # Create GitHub Release with all artifacts
+  release:
+    needs: [linux, macos, windows, arch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f 2>/dev/null || ls -laR artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version || '1.0.0' }}
+          name: Website Searcher v${{ inputs.version || '1.0.0' }}
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

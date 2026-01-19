@@ -11,7 +11,8 @@ on:
     inputs:
       version:
         type: string
-        required: true
+        required: false
+        default: "1.0.0"
 
 permissions:
   contents: write
@@ -25,9 +26,6 @@ jobs:
           - arch: x86_64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
 
     runs-on: ${{ matrix.runner }}
     container:
@@ -38,7 +36,7 @@ jobs:
       - name: Install base dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git curl rustup pkg-config openssl gtk3 webkit2gtk-4.1 libappindicator-gtk3 librsvg fakeroot
+          pacman -S --noconfirm base-devel git curl rustup pkg-config openssl gtk3 webkit2gtk-4.1 libappindicator-gtk3 librsvg fakeroot sudo
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,29 +45,18 @@ jobs:
         run: |
           rustup-init -y --default-toolchain stable
           source ~/.cargo/env
-          rustup target add ${{ matrix.target }}
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build CLI (release)
         run: |
           source ~/.cargo/env
-          cargo build -p website-searcher --release --target ${{ matrix.target }}
-
-      - name: Build GUI (release)
-        run: |
-          source ~/.cargo/env
-          # Install Node.js for GUI build
-          pacman -S --noconfirm nodejs npm
-          npm install -g pnpm
-          pnpm --dir gui i --no-frozen-lockfile
-          cargo build -p website-searcher-gui --release --target ${{ matrix.target }} || true
+          cargo build -p website-searcher --release
 
       - name: Generate PKGBUILD
         run: |
           VERSION="${{ inputs.version || '1.0.0' }}"
-          ARCH="${{ matrix.arch }}"
-          CLI_BIN="$(pwd)/target/${{ matrix.target }}/release/website-searcher"
-          GUI_BIN="$(pwd)/target/${{ matrix.target }}/release/website-searcher-gui"
+          ARCH="x86_64"
+          CLI_BIN="$(pwd)/target/release/website-searcher"
           LICENSE="$(pwd)/LICENSE"
           WS_SCRIPT="$(pwd)/scripts/ws"
 
@@ -80,10 +67,10 @@ jobs:
           pkgver=VERSION_PLACEHOLDER
           pkgrel=1
           pkgdesc="Cross-platform CLI that queries multiple game-download sites"
-          arch=('ARCH_PLACEHOLDER')
+          arch=('x86_64')
           url="https://github.com/reekid420/website-searcher"
           license=('MIT')
-          depends=('glibc' 'openssl' 'gtk3' 'webkit2gtk-4.1')
+          depends=('glibc' 'openssl')
           provides=('website-searcher' 'websearcher' 'ws')
           source=()
 
@@ -95,10 +82,6 @@ jobs:
                   install -Dm755 "WS_SCRIPT_PLACEHOLDER" "$pkgdir/usr/bin/ws"
               fi
               
-              if [ -f "GUI_BIN_PLACEHOLDER" ]; then
-                  install -Dm755 "GUI_BIN_PLACEHOLDER" "$pkgdir/usr/bin/website-searcher-gui"
-              fi
-              
               if [ -f "LICENSE_PLACEHOLDER" ]; then
                   install -Dm644 "LICENSE_PLACEHOLDER" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
               fi
@@ -107,9 +90,7 @@ jobs:
 
           # Replace placeholders
           sed -i "s|VERSION_PLACEHOLDER|${VERSION//-/_}|g" pkg/PKGBUILD
-          sed -i "s|ARCH_PLACEHOLDER|${ARCH}|g" pkg/PKGBUILD
           sed -i "s|CLI_BIN_PLACEHOLDER|${CLI_BIN}|g" pkg/PKGBUILD
-          sed -i "s|GUI_BIN_PLACEHOLDER|${GUI_BIN}|g" pkg/PKGBUILD
           sed -i "s|LICENSE_PLACEHOLDER|${LICENSE}|g" pkg/PKGBUILD
           sed -i "s|WS_SCRIPT_PLACEHOLDER|${WS_SCRIPT}|g" pkg/PKGBUILD
 
@@ -118,7 +99,7 @@ jobs:
       - name: Build Arch package
         run: |
           # Create non-root user for makepkg (makepkg doesn't run as root)
-          useradd -m builder
+          useradd -m builder || true
           chown -R builder:builder .
 
           cd pkg
@@ -130,12 +111,11 @@ jobs:
       - name: Rename and stage artifact
         run: |
           VERSION="${{ inputs.version || '1.0.0' }}"
-          ARCH="${{ matrix.arch }}"
 
           mkdir -p dist
           for pkg in pkg/*.pkg.tar.zst; do
             if [ -f "$pkg" ]; then
-              cp "$pkg" "dist/website-searcher-${VERSION}-linux-${ARCH}.pkg.tar.zst"
+              cp "$pkg" "dist/website-searcher-${VERSION}-linux-x86_64.pkg.tar.zst"
             fi
           done
 
@@ -144,6 +124,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: arch-package-${{ matrix.arch }}
+          name: arch-package-x86_64
           path: dist/*.pkg.tar.zst
           if-no-files-found: warn
