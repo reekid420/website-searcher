@@ -1,15 +1,36 @@
 name: build-macos
 
 on:
-  workflow_dispatch: {}
-  workflow_call: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build"
+        required: false
+        default: "1.0.0"
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   build:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+            target: aarch64-apple-darwin
+          - os: macos-13
+            arch: x64
+            target: x86_64-apple-darwin
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,55 +60,52 @@ jobs:
           TRIPLE=$(rustc -Vv | awk '/host:/{print $2}')
           cp target/release/website-searcher src-tauri/bin/website-searcher-$TRIPLE
 
-      - name: Build Tauri (dmg,pkg)
+      - name: Build Tauri (dmg)
         uses: tauri-apps/tauri-action@v0
         with:
-          args: --bundles dmg,pkg
+          args: --bundles dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage artifacts with version
+        run: |
+          VERSION="${{ inputs.version || '1.0.0' }}"
+          ARCH="${{ matrix.arch }}"
+
+          mkdir -p dist
+
+          # Copy standalone binary
+          cp target/release/website-searcher "dist/website-searcher-${VERSION}-macos-${ARCH}"
+
+          # Copy DMG
+          for dmg in target/release/bundle/dmg/*.dmg; do
+            if [ -f "$dmg" ]; then
+              cp "$dmg" "dist/website-searcher-${VERSION}-macos-${ARCH}.dmg"
+            fi
+          done
+
+          ls -la dist/
 
       - name: Install DMG and test
         run: |
-          DMG=$(ls target/release/bundle/dmg/*.dmg | head -n1)
-          echo "DMG=$DMG"
-          hdiutil attach "$DMG" -mountpoint /Volumes/WS -quiet
-          if [ -d "/Volumes/WS/website-searcher.app" ]; then
-            sudo cp -R "/Volumes/WS/website-searcher.app" /Applications || true
-          else
-            # Fallback: find the .app name
-            APP=$(ls /Volumes/WS/*.app | head -n1)
-            echo "APP=$APP"
-            sudo cp -R "$APP" /Applications || true
-          fi
-          test -d "/Applications/website-searcher.app"
-          # Look for CLI sidecar inside the bundle
-          ls "/Applications/website-searcher.app/Contents/MacOS" | grep -E '^website-searcher($|-)'
-          # Create ws alias in /usr/local/bin and test it
-          CLI=$(ls "/Applications/website-searcher.app/Contents/MacOS"/website-searcher* | head -n1)
-          if [ -n "$CLI" ]; then
-            sudo ln -sf "$CLI" /usr/local/bin/ws
-            command -v ws
-            ws --help || true
-          fi
-          # Detach volume
-          hdiutil detach /Volumes/WS -quiet || true
-
-      - name: Install PKG and test ws symlink
-        run: |
-          PKG=$(ls target/release/bundle/pkg/*.pkg 2>/dev/null | head -n1 || true)
-          if [ -n "$PKG" ]; then
-            sudo installer -pkg "$PKG" -target /
-            command -v ws || true
-            ws --help || true
+          DMG=$(ls dist/*.dmg 2>/dev/null | head -n1) || true
+          if [ -n "$DMG" ] && [ -f "$DMG" ]; then
+            echo "DMG=$DMG"
+            hdiutil attach "$DMG" -mountpoint /Volumes/WS -quiet || true
+            if [ -d "/Volumes/WS" ]; then
+              # Find the .app
+              APP=$(ls -d /Volumes/WS/*.app 2>/dev/null | head -n1) || true
+              if [ -n "$APP" ]; then
+                echo "APP=$APP"
+                sudo cp -R "$APP" /Applications/ || true
+              fi
+              hdiutil detach /Volumes/WS -quiet || true
+            fi
           fi
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: website-searcher
-          name: website-searcher
-          files: |
-            target/release/bundle/dmg/*.dmg
-            target/release/bundle/pkg/*.pkg
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: macos-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: warn

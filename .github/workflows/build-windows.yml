@@ -1,8 +1,17 @@
 name: build-windows
 
 on:
-  workflow_dispatch: {}
-  workflow_call: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build"
+        required: false
+        default: "1.0.0"
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
 
 permissions:
   contents: write
@@ -12,8 +21,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-11-arm]
+        include:
+          - os: windows-latest
+            arch: x64
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            arch: arm64
+            target: aarch64-pc-windows-msvc
+
     runs-on: ${{ matrix.os }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -66,15 +83,29 @@ jobs:
             Get-ChildItem -Recurse "C:\Program Files\website-searcher" | Select-String -Pattern "website-searcher(.exe)?" | Out-Null
           }
 
-      # NSIS removed: MSI only
+      - name: Stage artifacts with version
+        shell: bash
+        run: |
+          VERSION="${{ inputs.version || '1.0.0' }}"
+          ARCH="${{ matrix.arch }}"
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+          mkdir -p dist
+
+          # Copy standalone exe
+          cp target/release/website-searcher.exe "dist/website-searcher-${VERSION}-windows-${ARCH}.exe"
+
+          # Copy MSI with versioned name
+          for msi in target/release/bundle/msi/*.msi; do
+            if [ -f "$msi" ]; then
+              cp "$msi" "dist/website-searcher-${VERSION}-windows-${ARCH}.msi"
+            fi
+          done
+
+          ls -la dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: website-searcher
-          name: website-searcher
-          files: |
-            target/release/bundle/msi/*.msi
-            
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: windows-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: warn

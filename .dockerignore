@@ -1,28 +1,56 @@
-target
-.git
-.github
-.vscode
-.idea
+# =============================================================================
+# Docker Build Context Exclusions
+# =============================================================================
+
+# Build artifacts
+target/
+debug/
+coverage/
+
+# Version control
+.git/
+.gitignore
+
+# CI/CD
+.github/
+
+# IDE & Editor
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*.rs.bk
+
+# Node.js (not needed in Rust image)
+node_modules/
+gui/node_modules/
+.pnpm-store/
+package-lock.json
+pnpm-lock.yaml
+
+# Logs & temp files
 *.log
 *.tmp
-debug
-coverage
-.dockerignore
+logs/
+
+# Test artifacts
+playwright-report/
+test-results/
+
+# Documentation (not needed in runtime)
+docs/
+*.md
+!README.md
+
+# Docker files (prevent recursive inclusion)
 Dockerfile
-# Node/Playwright dev artifacts (not needed in Rust image)
-node_modules
-playwright-report
-test-results
-# General excludes
-**/*.md
-**/*.toml
-**/*.yml
-**/*.yaml
-**/*.rs.bk
-**/*.swp
-**/*.swo
-# Re-include manifests and configs for caching/reproducibility
-!Cargo.toml
-!Cargo.lock
-!rust-toolchain.toml
-!.cargo/config.toml
+docker-compose*.yml
+.dockerignore
+
+# Dev containers
+.devcontainer/
+
+# Misc
+.todo*/
+.cursorignore

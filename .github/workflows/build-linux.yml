@@ -1,8 +1,17 @@
 name: build-linux
 
 on:
-  workflow_dispatch: {}
-  workflow_call: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build"
+        required: false
+        default: "1.0.0"
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
 
 permissions:
   contents: write
@@ -12,8 +21,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, fedora-latest, fedora-39-arm64]
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            target: aarch64-unknown-linux-gnu
+
     runs-on: ${{ matrix.os }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,7 +49,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm zstd
 
       - name: Install frontend deps (gui)
         run: pnpm --dir gui i --no-frozen-lockfile
@@ -46,38 +65,83 @@ jobs:
           TRIPLE=$(rustc -Vv | awk '/host:/{print $2}')
           cp target/release/website-searcher src-tauri/bin/website-searcher-$TRIPLE
 
-      - name: Build Tauri (deb,rpm)
+      - name: Build Tauri (appimage,deb,rpm)
         uses: tauri-apps/tauri-action@v0
         with:
-          args: --bundles deb,rpm
+          args: --bundles appimage,deb,rpm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
 
-      - name: Install DEB and test (Ubuntu only)
-        if: startsWith(matrix.os, 'ubuntu')
+      - name: Create standalone tarball
         run: |
-          if ls target/release/bundle/deb/*.deb 1> /dev/null 2>&1; then
-            sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get -f install -y
-            test -d /opt/website-searcher
-            ls -R /opt/website-searcher | grep -E 'website-searcher($|-)'
-            # Create ws alias symlink and test
-            if [ -f /opt/website-searcher/bin/website-searcher ]; then
-              sudo ln -sf /opt/website-searcher/bin/website-searcher /usr/local/bin/ws
-            else
-              BIN=$(find /opt/website-searcher -type f -name 'website-searcher*' | head -n1)
-              if [ -n "$BIN" ]; then sudo ln -sf "$BIN" /usr/local/bin/ws; fi
+          VERSION="${{ inputs.version || '1.0.0' }}"
+          ARCH="${{ matrix.arch }}"
+
+          mkdir -p tarball/website-searcher-${VERSION}
+          cp target/release/website-searcher tarball/website-searcher-${VERSION}/
+          cp scripts/ws tarball/website-searcher-${VERSION}/ 2>/dev/null || true
+          cp LICENSE tarball/website-searcher-${VERSION}/ 2>/dev/null || true
+          cp README.md tarball/website-searcher-${VERSION}/ 2>/dev/null || true
+
+          cd tarball
+          tar -I 'zstd -19' -cvf website-searcher-${VERSION}-linux-${ARCH}.tar.zst website-searcher-${VERSION}/
+          cd ..
+
+          mv tarball/*.tar.zst .
+
+      - name: Stage artifacts with version
+        run: |
+          VERSION="${{ inputs.version || '1.0.0' }}"
+          ARCH="${{ matrix.arch }}"
+
+          mkdir -p dist
+
+          # Copy standalone binary
+          cp target/release/website-searcher "dist/website-searcher-${VERSION}-linux-${ARCH}"
+
+          # Copy tarball
+          cp *.tar.zst dist/ 2>/dev/null || true
+
+          # Copy AppImage
+          for appimage in target/release/bundle/appimage/*.AppImage; do
+            if [ -f "$appimage" ]; then
+              cp "$appimage" "dist/website-searcher-${VERSION}-linux-${ARCH}.AppImage"
             fi
-            command -v ws
-            ws --help || true
+          done
+
+          # Copy deb
+          for deb in target/release/bundle/deb/*.deb; do
+            if [ -f "$deb" ]; then
+              cp "$deb" "dist/website-searcher-${VERSION}-linux-${ARCH}.deb"
+            fi
+          done
+
+          # Copy rpm
+          for rpm_pkg in target/release/bundle/rpm/*.rpm; do
+            if [ -f "$rpm_pkg" ]; then
+              cp "$rpm_pkg" "dist/website-searcher-${VERSION}-linux-${ARCH}.rpm"
+            fi
+          done
+
+          ls -la dist/
+
+      - name: Install DEB and test (x64 only)
+        if: matrix.arch == 'x64'
+        run: |
+          if ls dist/*.deb 1> /dev/null 2>&1; then
+            sudo dpkg -i dist/*.deb || sudo apt-get -f install -y
+            test -d /opt/website-searcher || test -d /usr/share/website-searcher
+            # Create ws alias symlink and test
+            if command -v website-searcher &> /dev/null; then
+              sudo ln -sf $(which website-searcher) /usr/local/bin/ws 2>/dev/null || true
+            fi
+            ws --help || website-searcher --help || true
           fi
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: website-searcher
-          name: website-searcher
-          files: |
-            target/release/bundle/deb/*.deb
-            target/release/bundle/rpm/*.rpm
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: warn

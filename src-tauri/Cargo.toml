@@ -1,6 +1,6 @@
 [package]
 name = "website-searcher-gui"
-version = "0.1.0"
+version = "1.0.0"
 description = "A Tauri App"
 authors = ["reekid420"]
 license = "MIT"
@@ -24,8 +24,22 @@ log = "0.4"
 tauri = { version = "2.8.5", features = [] }
 tauri-plugin-log = "2"
 website_searcher_core = { path = "../crates/core" }
-tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "process", "io-util"] }
+tokio = { version = "1.39", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "sync",
+    "fs",
+    "process",
+    "io-util",
+] }
 futures = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "json"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "http2",
+    "gzip",
+    "brotli",
+    "json",
+] }
 serde_urlencoded = "0.7"
 urlencoding = "2.1"

@@ -333,7 +333,7 @@ def main() -> int:
     # Report versions
     print_versions()
     
-    print(f"\n{CYAN}[info]{RESET} Quickstart complete. You can now run: python compile.py")
+    print(f"\n{CYAN}[info]{RESET} Quickstart complete. Restart your terminal and run: python compile.py")
     return 0
 
 if __name__ == "__main__":

@@ -1,53 +1,93 @@
+# Docker Compose for website-searcher
+# 
+# Usage:
+#   docker compose up -d                    # Start app only
+#   docker compose --profile cf up -d       # Start app + FlareSolverr
+#   docker compose --profile playwright up  # Start playwright service
+#
+# Profiles:
+#   cf         - Include FlareSolverr for Cloudflare bypass
+#   playwright - Include Playwright for cs.rin.ru scraping
+
 services:
+  # ===========================================================================
+  # Main Application
+  # ===========================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - RUN_TESTS=false
+      tags:
+        - websearcher:latest
+    container_name: websearcher
+    environment:
+      - CF_URL=http://flaresolverr:8191/v1
+      - RUST_LOG=info
+    stdin_open: true
+    tty: true
+    # Security hardening
+    read_only: true
+    cap_drop:
+      - ALL
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '1'
+    restart: unless-stopped
+
+  # ===========================================================================
+  # FlareSolverr - Cloudflare Bypass (Optional)
+  # ===========================================================================
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
     container_name: flaresolverr
+    profiles:
+      - cf
     ports:
       - "8191:8191"
     environment:
       - LOG_LEVEL=info
+      - TZ=UTC
+    # Healthcheck for service readiness
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8191/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2'
     restart: unless-stopped
 
-  app:
-    build:
-      context: .
-      args:
-        - RUN_TESTS=false
-    container_name: website-searcher-app
-    environment:
-      - CF_URL=http://flaresolverr:8191/v1
-      - CSRIN_PAGES=2
-    depends_on:
-      - flaresolverr
-    stdin_open: true
-    tty: true
-    # No command override: default CMD ["websearcher"] keeps it interactive
-    # Use --no-playwright to force non-Playwright fallback if needed
-
-  tests:
-    image: rust:1.89
-    container_name: website-searcher-tests
-    platform: linux/amd64
-    working_dir: /workspace
-    volumes:
-      - ./:/workspace
-    environment:
-      - RUST_BACKTRACE=1
-    # CF_URL not required for tests (mocked)
-    entrypoint: ["cargo", "test", "--all", "--locked", "--verbose"]
-
+  # ===========================================================================
+  # Playwright - For cs.rin.ru scraping (Optional)
+  # ===========================================================================
   playwright:
-    image: mcr.microsoft.com/playwright:v1.46.1-jammy
-    container_name: website-searcher-playwright
+    image: mcr.microsoft.com/playwright:v1.49.1-jammy
+    container_name: websearcher-playwright
+    profiles:
+      - playwright
     platform: linux/amd64
     working_dir: /workspace
     volumes:
-      - ./:/workspace
+      - ./:/workspace:ro
+      - ./scripts:/workspace/scripts:ro
     environment:
       - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0
       - CSRIN_PAGES=2
-    # Example interactive run:
-    # docker compose run --rm playwright bash -lc "npm i -D playwright && node scripts/csrin_search.cjs 'elden ring'"
-    # Or run the Rust app with Playwright path:
-    # docker compose run --rm playwright bash -lc "npm i -D playwright && cargo build --release --locked && CSRIN_PAGES=2 target/release/website-searcher 'elden ring' --sites csrin --format table --debug --no-cf"
+    # Example usage:
+    # docker compose --profile playwright run --rm playwright \
+    #   bash -c "npm i -D playwright && node scripts/csrin_search.cjs 'elden ring'"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
