@@ -675,4 +675,368 @@ mod tests {
         assert_eq!(results[0].title, "ELDEN RING");
         assert_eq!(results[0].url, "https://elamigos.site/post/elden-ring");
     }
+
+    #[test]
+    fn parse_f95zone_extracts_thread_links() {
+        let cfg = SiteConfig {
+            name: "f95zone",
+            base_url: "https://f95zone.to",
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("q"),
+            listing_path: None,
+            result_selector: "a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <a href="/threads/elden-ring-nightreign.12345/">Elden Ring Nightreign [v1.0] [FromSoft]</a>
+            <a href="/threads/other-game.54321/">Other Game</a>
+            <a href="/members/user.123/">User Profile</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].title.contains("Elden Ring"));
+        assert!(results[0].url.contains("/threads/elden-ring"));
+    }
+
+    #[test]
+    fn parse_f95zone_deduplicates_urls() {
+        let cfg = SiteConfig {
+            name: "f95zone",
+            base_url: "https://f95zone.to",
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("q"),
+            listing_path: None,
+            result_selector: "a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <a href="/threads/elden-ring.12345/">Elden Ring</a>
+            <a href="/threads/elden-ring.12345/">Elden Ring (duplicate)</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn parse_nswpedia_extracts_game_links() {
+        let cfg = SiteConfig {
+            name: "nswpedia",
+            base_url: "https://nswpedia.com",
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("s"),
+            listing_path: None,
+            result_selector: "h2 a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <h2><a href="https://nswpedia.com/zelda-tears-kingdom/">Zelda Tears of the Kingdom</a></h2>
+            <h2><a href="https://nswpedia.com/category/games/">Games</a></h2>
+            <h2><a href="https://nswpedia.com/zelda-botw/">Zelda BOTW</a></h2>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "zelda");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|r| r.title.contains("Tears")));
+        assert!(results.iter().any(|r| r.title.contains("BOTW")));
+    }
+
+    #[test]
+    fn parse_nswpedia_skips_nav_elements() {
+        let cfg = SiteConfig {
+            name: "nswpedia",
+            base_url: "https://nswpedia.com",
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("s"),
+            listing_path: None,
+            result_selector: "h2 a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <h2><a href="https://nswpedia.com/about">About</a></h2>
+            <h2><a href="https://nswpedia.com/tag/games/">Tag Games</a></h2>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "games");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn csrin_topictitle_parses_relative_url_with_query() {
+        let cfg = SiteConfig {
+            name: "csrin",
+            base_url: "https://cs.rin.ru/forum",
+            search_kind: crate::models::SearchKind::PhpBBSearch,
+            query_param: Some("keywords"),
+            listing_path: None,
+            result_selector: "a.topictitle",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        // Simulate search.php results page
+        let html = r#"<html><body>search.php
+            <a class="topictitle" href="./viewtopic.php?t=12345&hilit=elden">Elden Ring</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].url.starts_with("https://cs.rin.ru/forum"));
+        assert!(results[0].url.contains("viewtopic.php"));
+    }
+
+    #[test]
+    fn derive_title_handles_query_strings() {
+        // Test that query strings and anchors are stripped
+        let result = derive_title_from_href("https://example.com/elden-ring?ref=search#main");
+        assert!(result.is_some());
+        let title = result.unwrap();
+        assert_eq!(title, "Elden Ring");
+    }
+
+    #[test]
+    fn derive_title_handles_special_characters() {
+        let result = derive_title_from_href("https://example.com/game_name-here");
+        assert!(result.is_some());
+        let title = result.unwrap();
+        assert_eq!(title, "Game Name Here");
+    }
+
+    #[test]
+    fn steamrip_filter_drops_nav_links() {
+        let mut cfg = cfg();
+        cfg.name = "steamrip";
+        let html = r#"<html><body>
+            <a href="/page/2">Next</a>
+            <a href="/game?s=test">Previous</a>
+            <a href="/elden-ring-free">Elden Ring Free Download</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].title.contains("Elden Ring"));
+    }
+
+    #[test]
+    fn steamrip_filter_drops_numeric_titles() {
+        let mut cfg = cfg();
+        cfg.name = "steamrip";
+        let html = r#"<html><body>
+            <a href="/elden-ring">12345</a>
+            <a href="/elden-ring-deluxe">Elden Ring Deluxe</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Elden Ring Deluxe");
+    }
+
+    #[test]
+    fn looks_like_date_detects_date_format() {
+        assert!(looks_like_date_ddmmyyyy("21/07/2023"));
+        assert!(looks_like_date_ddmmyyyy("1/1/2023"));
+        assert!(!looks_like_date_ddmmyyyy("not a date"));
+        assert!(!looks_like_date_ddmmyyyy("2023-07-21"));
+    }
+
+    #[test]
+    fn empty_html_returns_empty_results() {
+        let results = parse_results(&cfg(), "", "query");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn gog_games_filtering_requires_game_path() {
+        let mut cfg = cfg();
+        cfg.name = "gog-games";
+        let html = r#"<html><body>
+            <a href="/game/elden-ring">Elden Ring</a>
+            <a href="/search?q=elden">Search Results</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].url.contains("/game/"));
+    }
+
+    #[test]
+    fn fitgirl_filters_category_and_tag_urls() {
+        let mut cfg = cfg();
+        cfg.name = "fitgirl";
+        let html = r#"<html><body>
+            <a href="/category/games">Elden Ring Category</a>
+            <a href="/tag/rpg">Elden Ring RPG Tag</a>
+            <a href="/post/elden-ring">Elden Ring Download</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].url.contains("/post/"));
+    }
+
+    #[test]
+    fn fitgirl_filters_inquiry_pages() {
+        let mut cfg = cfg();
+        cfg.name = "fitgirl";
+        let html = r#"<html><body>
+            <a href="/inquiry/elden-ring">Elden Ring Inquiry</a>
+            <a href="/inquery/elden">Elden Inquery</a>
+            <a href="/game/elden-ring-proper">Elden Ring Proper</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].url.contains("/game/"));
+    }
+
+    #[test]
+    fn elamigos_empty_query_returns_empty() {
+        let cfg = SiteConfig {
+            name: "elamigos",
+            base_url: "https://elamigos.site/",
+            search_kind: crate::models::SearchKind::FrontPage,
+            query_param: None,
+            listing_path: None,
+            result_selector: "h3 a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <h3><a href="/game/other">Other Game DOWNLOAD</a></h3>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn f95zone_skips_pagination_and_hash_links() {
+        let cfg = SiteConfig {
+            name: "f95zone",
+            base_url: "https://f95zone.to",
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("q"),
+            listing_path: None,
+            result_selector: "a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <a href="/threads/elden-ring.12345/page-2">Page 2</a>
+            <a href="/threads/elden-ring.12345/#post-1">Elden Ring Post</a>
+            <a href="/threads/elden-ring.12345/">Elden Ring Main</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].url.contains("page-"));
+    }
+
+    #[test]
+    fn derive_title_empty_segment_returns_none() {
+        let result = derive_title_from_href("https://example.com/");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn derive_title_url_encoded_segment() {
+        let result = derive_title_from_href("https://example.com/elden%20ring%20deluxe");
+        assert!(result.is_some());
+        assert!(result.unwrap().to_lowercase().contains("elden"));
+    }
+
+    #[test]
+    fn primary_selector_with_parent_href() {
+        // Tests the case where anchor doesn't have href but parent does
+        let cfg = SiteConfig {
+            name: "example",
+            base_url: "https://example.com/",
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("s"),
+            listing_path: None,
+            result_selector: "span.title",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <a href="/elden-ring"><span class="title">Elden Ring</span></a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn csrin_relative_url_without_leading_slash() {
+        let cfg = SiteConfig {
+            name: "csrin",
+            base_url: "https://cs.rin.ru/forum",
+            search_kind: crate::models::SearchKind::PhpBBSearch,
+            query_param: Some("keywords"),
+            listing_path: None,
+            result_selector: "a.topictitle",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>search.php
+            <a class="topictitle" href="viewtopic.php?t=99">Elden Ring</a>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].url.starts_with("https://cs.rin.ru/forum"));
+    }
+
+    #[test]
+    fn steamrip_filter_empty_title_returns_none() {
+        let result = filter_and_normalize_steamrip("/game", "   ");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn fitgirl_filter_empty_title_returns_none() {
+        let result = filter_and_normalize_fitgirl("/game", "   ");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn nswpedia_skips_non_domain_links() {
+        let cfg = SiteConfig {
+            name: "nswpedia",
+            base_url: "https://nswpedia.com",
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("s"),
+            listing_path: None,
+            result_selector: "h2 a",
+            title_attr: "text",
+            url_attr: "href",
+            requires_js: false,
+            requires_cloudflare: false,
+        };
+        let html = r#"<html><body>
+            <h2><a href="https://other-site.com/zelda">Zelda on Other</a></h2>
+            <h2><a href="https://nswpedia.com/zelda-totk">Zelda TOTK</a></h2>
+        </body></html>"#;
+        let results = parse_results(&cfg, html, "zelda");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].url.contains("nswpedia.com"));
+    }
+
+    #[test]
+    fn looks_like_date_edge_cases() {
+        // Too short
+        assert!(!looks_like_date_ddmmyyyy("1/1/23"));
+        // Too long
+        assert!(!looks_like_date_ddmmyyyy("01/01/20230"));
+        // Not enough slashes
+        assert!(!looks_like_date_ddmmyyyy("01-01-2023"));
+    }
 }

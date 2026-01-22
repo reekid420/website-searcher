@@ -1,6 +1,22 @@
-import React, { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import './App.css'
-import { invokeSearch, fetchSites, type SearchResult } from './api'
+import { 
+  invokeSearch, 
+  fetchSites, 
+  type SearchResult,
+  type CacheEntry,
+  getCache,
+  getCachedResults,
+  addToCache,
+  removeCacheEntry,
+  clearCache as apiClearCache,
+  getCacheSettings,
+  setCacheSize as apiSetCacheSize
+} from './api'
+
+// Cache configuration constants
+const MIN_CACHE_SIZE = 3
+const MAX_CACHE_SIZE = 20
 
 function App() {
   const [q, setQ] = useState('')
@@ -18,6 +34,28 @@ function App() {
   const [noPlaywright, setNoPlaywright] = useState<boolean>(false)
   const [debug, setDebug] = useState<boolean>(false)
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
+
+  // Cache state (now from Tauri backend)
+  const [cache, setCache] = useState<CacheEntry[]>([])
+  const [cacheSize, setCacheSize] = useState<number>(MIN_CACHE_SIZE)
+  const [showSettings, setShowSettings] = useState(false)
+  const [cacheHit, setCacheHit] = useState(false)
+
+  // Load cache and settings from Tauri backend
+  useEffect(() => {
+    getCache().then(setCache).catch(console.error)
+    getCacheSettings().then(setCacheSize).catch(console.error)
+  }, [])
+
+  // Reload cache from backend
+  const reloadCache = useCallback(async () => {
+    try {
+      const entries = await getCache()
+      setCache(entries)
+    } catch (e) {
+      console.error('Failed to reload cache:', e)
+    }
+  }, [])
 
   const copyToClipboard = useCallback(async (url: string) => {
     try {
@@ -43,16 +81,79 @@ function App() {
   }, [results])
 
   // Load site list once
-  React.useEffect(() => {
+  useEffect(() => {
     fetchSites().then(setSiteOptions).catch(() => setSiteOptions([]))
   }, [])
 
+  // Load a cached search
+  const loadCachedSearch = useCallback(async (entry: CacheEntry) => {
+    setQ(entry.query)
+    try {
+      const cachedResults = await getCachedResults(entry.query)
+      if (cachedResults) {
+        setResults(cachedResults)
+        setCacheHit(true)
+        setTimeout(() => setCacheHit(false), 2000)
+      }
+    } catch (e) {
+      console.error('Failed to load cached results:', e)
+    }
+  }, [])
+
+  // Delete a cache entry
+  const deleteEntry = useCallback(async (query: string, event: React.MouseEvent) => {
+    event.stopPropagation() // Don't trigger loadCachedSearch
+    try {
+      await removeCacheEntry(query)
+      await reloadCache()
+    } catch (e) {
+      console.error('Failed to delete cache entry:', e)
+    }
+  }, [reloadCache])
+
+  // Clear all cache
+  const handleClearCache = useCallback(async () => {
+    try {
+      await apiClearCache()
+      setCache([])
+    } catch (e) {
+      console.error('Failed to clear cache:', e)
+    }
+  }, [])
+
+  // Update cache size
+  const handleSetCacheSize = useCallback(async (size: number) => {
+    try {
+      await apiSetCacheSize(size)
+      setCacheSize(size)
+      await reloadCache() // Reload in case entries were evicted
+    } catch (e) {
+      console.error('Failed to set cache size:', e)
+    }
+  }, [reloadCache])
+
   async function onSearch() {
     setError(null)
+    setCacheHit(false)
     if (!q.trim()) {
       setError('Enter a search phrase')
       return
     }
+
+    // Check cache first
+    try {
+      const cached = await getCachedResults(q)
+      if (cached) {
+        setResults(cached)
+        setCacheHit(true)
+        setTimeout(() => setCacheHit(false), 2000)
+        console.log('Cache hit for:', q)
+        return
+      }
+    } catch (e) {
+      console.error('Cache lookup failed:', e)
+    }
+
     setLoading(true)
     try {
       const rs = await invokeSearch({
@@ -68,6 +169,15 @@ function App() {
         no_playwright: noPlaywright,
       })
       setResults(rs)
+      // Add to cache if we got results
+      if (rs.length > 0) {
+        try {
+          await addToCache(q, rs)
+          await reloadCache()
+        } catch (e) {
+          console.error('Failed to cache results:', e)
+        }
+      }
       console.log('results', rs)
     } catch (e) {
       setError((e as Error).message)
@@ -78,18 +188,132 @@ function App() {
 
   return (
     <div style={{ padding: 16 }}>
-      <h1>Website Searcher</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <h1 style={{ margin: 0 }}>Website Searcher</h1>
+        <button
+          onClick={() => setShowSettings(!showSettings)}
+          style={{ padding: '6px 12px', cursor: 'pointer' }}
+        >
+          ⚙️ Settings
+        </button>
+      </div>
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <div className="settings-panel" style={{ 
+          border: '1px solid #444', 
+          borderRadius: 8, 
+          padding: 16, 
+          marginBottom: 16,
+          background: '#1a1a1a'
+        }}>
+          <h3 style={{ marginTop: 0 }}>Settings</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>Cache Size:</span>
+              <input
+                type="range"
+                min={MIN_CACHE_SIZE}
+                max={MAX_CACHE_SIZE}
+                value={cacheSize}
+                onChange={(e) => handleSetCacheSize(Number(e.target.value))}
+              />
+              <span style={{ minWidth: 24 }}>{cacheSize}</span>
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={handleClearCache} style={{ padding: '6px 12px' }}>
+              🗑️ Clear Cache ({cache.length} entries)
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: '#888', marginBottom: 0 }}>
+            Cache is shared with CLI/TUI
+          </p>
+        </div>
+      )}
+
+      {/* Recent Searches */}
+      {cache.length > 0 && (
+        <div className="recent-searches" style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Recent searches:</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {cache.slice(0, 5).map((entry, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '4px 8px',
+                  fontSize: 12,
+                  border: '1px solid #555',
+                  borderRadius: 16,
+                  background: '#2a2a2a',
+                  color: '#ddd',
+                }}
+              >
+                <button
+                  onClick={() => loadCachedSearch(entry)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#ddd',
+                    cursor: 'pointer',
+                    padding: 0,
+                    fontSize: 12
+                  }}
+                  title={`${entry.result_count} results`}
+                >
+                  {entry.query}
+                </button>
+                <button
+                  onClick={(e) => deleteEntry(entry.query, e)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#888',
+                    cursor: 'pointer',
+                    padding: '0 2px',
+                    fontSize: 10,
+                    lineHeight: 1
+                  }}
+                  title="Remove from cache"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="e.g., elden ring"
           style={{ flex: 1, padding: 8 }}
+          onKeyDown={(e) => e.key === 'Enter' && onSearch()}
         />
         <button onClick={onSearch} disabled={loading}>
           {loading ? 'Searching…' : 'Search'}
         </button>
       </div>
+
+      {/* Cache hit indicator */}
+      {cacheHit && (
+        <div style={{ 
+          background: '#2d5a2d', 
+          color: '#8f8', 
+          padding: '4px 12px', 
+          borderRadius: 4, 
+          marginBottom: 8,
+          fontSize: 13
+        }}>
+          ⚡ Results loaded from cache (shared with CLI)
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div>
           <label>Sites</label>

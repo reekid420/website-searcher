@@ -187,4 +187,74 @@ mod tests {
             .unwrap();
         assert_eq!(body, "ok");
     }
+
+    #[tokio::test]
+    async fn fetch_with_headers_none_works() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/no-hdr")
+            .with_status(200)
+            .with_body("no header")
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let body = fetch_with_retry_headers(&client, &format!("{}/no-hdr", server.url()), None)
+            .await
+            .unwrap();
+        assert_eq!(body, "no header");
+    }
+
+    #[tokio::test]
+    async fn fetch_with_headers_redirection_returns_empty() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/hdr-redir")
+            .with_status(302)
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let body = fetch_with_retry_headers(&client, &format!("{}/hdr-redir", server.url()), None)
+            .await
+            .unwrap();
+        assert_eq!(body, "");
+    }
+
+    #[tokio::test]
+    async fn fetch_with_headers_forbidden_returns_empty() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/hdr-forbid")
+            .with_status(403)
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let body = fetch_with_retry_headers(&client, &format!("{}/hdr-forbid", server.url()), None)
+            .await
+            .unwrap();
+        assert_eq!(body, "");
+    }
+
+    #[tokio::test]
+    async fn fetch_with_headers_retries_then_errors() {
+        let mut server = Server::new_async().await;
+        let _m1 = server
+            .mock("GET", "/hdr-fail")
+            .with_status(500)
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/hdr-fail")
+            .with_status(500)
+            .create_async()
+            .await;
+        let _m3 = server
+            .mock("GET", "/hdr-fail")
+            .with_status(500)
+            .create_async()
+            .await;
+        let client = build_http_client();
+        let res =
+            fetch_with_retry_headers(&client, &format!("{}/hdr-fail", server.url()), None).await;
+        assert!(res.is_err());
+    }
 }

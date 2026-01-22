@@ -43,7 +43,7 @@ services:
   # FlareSolverr - Cloudflare Bypass (Optional)
   # ===========================================================================
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
+    image: flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     profiles:
       - cf

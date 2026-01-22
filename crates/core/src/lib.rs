@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod cf;
 pub mod config;
 pub mod fetcher;

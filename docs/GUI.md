@@ -33,11 +33,11 @@ cargo tauri dev
 
 ### Window Properties
 
-| Property | Value |
-|----------|-------|
+| Property     | Value     |
+| ------------ | --------- |
 | Default Size | 800 x 600 |
-| Theme | Dark |
-| Resizable | Yes |
+| Theme        | Dark      |
+| Resizable    | Yes       |
 
 ## Features
 
@@ -51,17 +51,29 @@ cargo tauri dev
 ### Link Handling
 
 When you click a result link:
+
 - URL is **copied to clipboard**
 - "Copied!" animation displays
 - Link opens in default browser
 
 ### Keyboard Shortcuts
 
-| Key | Action |
-|-----|--------|
-| `Enter` | Execute search |
-| `Ctrl+V` | Paste into search |
-| `Esc` | Clear search / Close dialogs |
+| Key      | Action                       |
+| -------- | ---------------------------- |
+| `Enter`  | Execute search               |
+| `Ctrl+V` | Paste into search            |
+| `Esc`    | Clear search / Close dialogs |
+
+### Search Caching
+
+The GUI caches recent searches for instant retrieval:
+
+- **Recent Searches**: Click a recent search pill to reload cached results instantly
+- **Cache Hit Indicator**: Green banner shows when results are loaded from cache
+- **Settings Panel**: Click ⚙️ Settings to:
+  - Adjust cache size (3-20 searches)
+  - Clear all cached searches
+- **Persistence**: Cache persists across sessions via localStorage
 
 ## Configuration
 
@@ -70,12 +82,14 @@ The GUI is configured in `src-tauri/tauri.conf.json`:
 ```json
 {
   "app": {
-    "windows": [{
-      "title": "website-searcher",
-      "width": 800,
-      "height": 600,
-      "theme": "Dark"
-    }]
+    "windows": [
+      {
+        "title": "website-searcher",
+        "width": 800,
+        "height": 600,
+        "theme": "Dark"
+      }
+    ]
   }
 }
 ```
@@ -84,19 +98,19 @@ The GUI is configured in `src-tauri/tauri.conf.json`:
 
 The GUI communicates with the backend via Tauri IPC commands defined in `src-tauri/src/lib.rs`:
 
-| Command | Description |
-|---------|-------------|
-| `search` | Execute search with query and site filters |
-| `get_sites` | List available sites |
+| Command     | Description                                |
+| ----------- | ------------------------------------------ |
+| `search`    | Execute search with query and site filters |
+| `get_sites` | List available sites                       |
 
 ## Frontend Stack
 
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| React | 19.x | UI framework |
-| TypeScript | 5.8 | Type safety |
-| Vite | 7.x | Build tool |
-| Tauri API | 2.x | Native bridge |
+| Technology | Version | Purpose       |
+| ---------- | ------- | ------------- |
+| React      | 19.x    | UI framework  |
+| TypeScript | 5.8     | Type safety   |
+| Vite       | 7.x     | Build tool    |
+| Tauri API  | 2.x     | Native bridge |
 
 ## Building the GUI
 
@@ -116,23 +130,24 @@ python compile.py
 
 GUI is included in platform packages:
 
-| Platform | Package | GUI Included |
-|----------|---------|--------------|
-| Windows | MSI | Yes |
-| macOS | DMG | Yes |
-| Linux | AppImage | Yes |
-| Linux | deb/rpm | Yes |
-| Arch | pkg.tar.zst | Yes (unless `--nogui`) |
+| Platform | Package     | GUI Included           |
+| -------- | ----------- | ---------------------- |
+| Windows  | MSI         | Yes                    |
+| macOS    | DMG         | Yes                    |
+| Linux    | AppImage    | Yes                    |
+| Linux    | deb/rpm     | Yes                    |
+| Arch     | pkg.tar.zst | Yes (unless `--nogui`) |
 
 ## Troubleshooting
 
 ### GUI won't start
 
 1. Ensure WebKit is installed (Linux):
+
    ```bash
    # Debian/Ubuntu
    sudo apt install libwebkit2gtk-4.1-0
-   
+
    # Arch
    sudo pacman -S webkit2gtk-4.1
    ```
@@ -145,6 +160,7 @@ GUI is included in platform packages:
 ### Search returns no results
 
 1. Try `--debug` mode in CLI to verify sites work:
+
    ```bash
    websearcher "test" --debug --format table
    ```

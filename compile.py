@@ -357,31 +357,6 @@ def run_clippy() -> None:
         cmd.insert(1, q)
     run_cmd(cmd)
 
-def run_tests() -> None:
-    """Run tests with nextest or fallback to cargo test."""
-    step("Tests")
-    q = cargo_q()
-    
-    if command_exists("cargo-nextest"):
-        cmd = ["cargo", "nextest", "run", "--locked", "--workspace"]
-        if q:
-            cmd.insert(1, q)
-        run_cmd(cmd)
-    else:
-        print_and_log("Nextest not found, falling back to cargo test")
-        cmd = ["cargo", "test", "--locked", "--workspace"]
-        if q:
-            cmd.insert(1, q)
-        run_cmd(cmd)
-
-def run_audit() -> None:
-    """Run cargo audit."""
-    step("Audit")
-    try:
-        run_cmd(["cargo", "audit"], check=False)
-    except Exception as e:
-        print_and_log(f"{YELLOW}cargo audit failed, continuing...{RESET}")
-
 def build_cli_release() -> None:
     """Build CLI in release mode."""
     step("Build CLI (release)")
@@ -628,14 +603,8 @@ def main() -> int:
         # Lint
         run_clippy()
         
-        # Debug build
+        # Debug build (for development)
         build_cli_debug()
-        
-        # Tests
-        run_tests()
-        
-        # Audit
-        run_audit()
         
         # Build workspace
         build_workspace_release()

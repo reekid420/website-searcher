@@ -57,6 +57,9 @@
 
         <UIRef Id="WixUI_FeatureTree" />
 
+        <!-- EULA License Agreement Dialog -->
+        <WixVariable Id="WixUILicenseRtf" Value="..\..\..\..\src-tauri\wix\License.rtf" />
+
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="DesktopFolder" Name="Desktop">
                 <Component Id="ApplicationShortcutDesktop" Guid="3A991B56-5F38-4A8A-8B23-4FC60C9EC41A">

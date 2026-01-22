@@ -5,7 +5,16 @@ use reqwest::header::{
     ACCEPT, COOKIE, HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, REFERER,
 };
 use tokio::sync::Semaphore;
+use website_searcher_core::cache::{MIN_CACHE_SIZE, SearchCache};
 use website_searcher_core::{cf, config, fetcher, models, parser, query};
+
+/// Get the shared cache file path (same as CLI uses)
+fn get_cache_path() -> std::path::PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("website-searcher")
+        .join("search_cache.json")
+}
 
 #[derive(serde::Deserialize)]
 struct SearchArgs {
@@ -28,6 +37,130 @@ async fn list_sites() -> Result<Vec<String>, String> {
         .map(|s| s.name.to_string())
         .collect();
     Ok(names)
+}
+
+/// Cache entry for serialization to frontend
+#[derive(serde::Serialize, Clone)]
+struct CacheEntryResponse {
+    query: String,
+    result_count: usize,
+    timestamp: u64,
+}
+
+/// Get all cached searches
+#[tauri::command]
+async fn get_cache() -> Result<Vec<CacheEntryResponse>, String> {
+    let path = get_cache_path();
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let cache = SearchCache::load_from_file(&path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let entries: Vec<CacheEntryResponse> = cache
+        .entries()
+        .iter()
+        .rev() // newest first
+        .map(|e| CacheEntryResponse {
+            query: e.query.clone(),
+            result_count: e.results.len(),
+            timestamp: e.timestamp,
+        })
+        .collect();
+    Ok(entries)
+}
+
+/// Get cached results for a specific query
+#[tauri::command]
+async fn get_cached_results(query: String) -> Result<Option<Vec<models::SearchResult>>, String> {
+    let path = get_cache_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let cache = SearchCache::load_from_file(&path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some(entry) = cache.get(&query) {
+        Ok(Some(entry.results.clone()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Add search results to cache
+#[tauri::command]
+async fn add_to_cache(query: String, results: Vec<models::SearchResult>) -> Result<(), String> {
+    let path = get_cache_path();
+    let mut cache = if path.exists() {
+        SearchCache::load_from_file(&path)
+            .await
+            .unwrap_or_else(|_| SearchCache::with_default_size())
+    } else {
+        SearchCache::with_default_size()
+    };
+
+    cache.add(query, results);
+    cache.save_to_file(&path).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Remove a specific cache entry by query
+#[tauri::command]
+async fn remove_cache_entry(query: String) -> Result<bool, String> {
+    let path = get_cache_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut cache = SearchCache::load_from_file(&path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let removed = cache.remove(&query);
+    cache.save_to_file(&path).await.map_err(|e| e.to_string())?;
+    Ok(removed)
+}
+
+/// Clear all cache entries
+#[tauri::command]
+async fn clear_cache() -> Result<(), String> {
+    let path = get_cache_path();
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Get cache settings (size)
+#[tauri::command]
+async fn get_cache_settings() -> Result<usize, String> {
+    let path = get_cache_path();
+    if path.exists() {
+        let cache = SearchCache::load_from_file(&path)
+            .await
+            .unwrap_or_else(|_| SearchCache::with_default_size());
+        Ok(cache.max_size())
+    } else {
+        Ok(MIN_CACHE_SIZE)
+    }
+}
+
+/// Set cache size
+#[tauri::command]
+async fn set_cache_size(size: usize) -> Result<(), String> {
+    let path = get_cache_path();
+    let mut cache = if path.exists() {
+        SearchCache::load_from_file(&path)
+            .await
+            .unwrap_or_else(|_| SearchCache::with_default_size())
+    } else {
+        SearchCache::with_default_size()
+    };
+
+    cache.set_max_size(size);
+    cache.save_to_file(&path).await.map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -266,7 +399,17 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![search_gui, list_sites])
+        .invoke_handler(tauri::generate_handler![
+            search_gui,
+            list_sites,
+            get_cache,
+            get_cached_results,
+            add_to_cache,
+            remove_cache_entry,
+            clear_cache,
+            get_cache_settings,
+            set_cache_size
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -577,4 +720,288 @@ fn filter_results_by_query_strict(results: &mut Vec<models::SearchResult>, query
         let gog_path_ok = ul.contains("/game/") || ul.contains("/games/");
         matches && gog_path_ok
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn list_sites_returns_all_configs() {
+        let sites = list_sites().await.unwrap();
+        assert!(!sites.is_empty());
+        // Should contain well-known sites
+        assert!(sites.iter().any(|s| s.eq_ignore_ascii_case("fitgirl")));
+        assert!(sites.iter().any(|s| s.eq_ignore_ascii_case("dodi")));
+    }
+
+    #[test]
+    fn filter_results_by_query_strict_removes_unrelated() {
+        let mut results = vec![
+            models::SearchResult {
+                site: "gog-games".into(),
+                title: "Elden Ring".into(),
+                url: "https://gog-games.to/game/elden-ring".into(),
+            },
+            models::SearchResult {
+                site: "gog-games".into(),
+                title: "Other Game".into(),
+                url: "https://gog-games.to/game/other".into(),
+            },
+        ];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Elden Ring");
+    }
+
+    #[test]
+    fn filter_results_by_query_strict_handles_dash_encoding() {
+        let mut results = vec![models::SearchResult {
+            site: "gog-games".into(),
+            title: "A Long Title".into(),
+            url: "https://gog-games.to/game/elden-ring".into(),
+        }];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn collect_title_url_pairs_extracts_from_array() {
+        let json = serde_json::json!([
+            {"title": "Game A", "url": "https://gog-games.to/game/a"},
+            {"title": "Game B", "permalink": "https://gog-games.to/game/b"}
+        ]);
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().any(|r| r.title == "Game A"));
+        assert!(out.iter().any(|r| r.title == "Game B"));
+    }
+
+    #[test]
+    fn collect_title_url_pairs_extracts_from_nested_object() {
+        let json = serde_json::json!({
+            "data": {
+                "items": [{"title": "Nested Game", "slug": "nested-game"}]
+            }
+        });
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].title, "Nested Game");
+        assert!(out[0].url.contains("nested-game"));
+    }
+
+    #[test]
+    fn collect_title_url_pairs_handles_slug_to_url() {
+        let json = serde_json::json!({"title": "My Game", "slug": "my-game"});
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].url, "https://gog-games.to/game/my-game");
+    }
+
+    #[test]
+    fn collect_title_url_pairs_handles_relative_urls() {
+        let json = serde_json::json!({"title": "Rel Game", "url": "/game/relative"});
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].url, "https://gog-games.to/game/relative");
+    }
+
+    #[test]
+    fn filter_gog_path_must_include_game_segment() {
+        let mut results = vec![
+            models::SearchResult {
+                site: "gog-games".into(),
+                title: "Elden Ring".into(),
+                url: "https://gog-games.to/game/elden-ring".into(),
+            },
+            models::SearchResult {
+                site: "gog-games".into(),
+                title: "Other".into(),
+                url: "https://gog-games.to/search?q=elden".into(),
+            },
+        ];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].url.contains("/game/"));
+    }
+
+    #[test]
+    fn filter_results_handles_url_variants() {
+        let mut results = vec![
+            models::SearchResult {
+                site: "gog-games".into(),
+                title: "Some Title".into(),
+                url: "https://gog-games.to/game/elden%20ring".into(),
+            },
+            models::SearchResult {
+                site: "gog-games".into(),
+                title: "Some Title".into(),
+                url: "https://gog-games.to/games/elden+ring".into(),
+            },
+        ];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn collect_pairs_handles_empty_value() {
+        let json = serde_json::json!({});
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collect_pairs_uses_name_fallback() {
+        let json = serde_json::json!({"name": "My Game", "slug": "my-game"});
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].title, "My Game");
+    }
+
+    #[test]
+    fn collect_pairs_uses_path_fallback() {
+        let json = serde_json::json!({"title": "Path Game", "path": "/game/path-game"});
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].url.contains("path-game"));
+    }
+
+    #[tokio::test]
+    async fn fetch_csrin_playwright_uses_env_var() {
+        // SAFETY: Test-only, single-threaded; no other code reads this env var concurrently
+        unsafe { std::env::set_var("CS_PLAYWRIGHT_HTML", "<html>test content</html>") };
+        let result = fetch_csrin_playwright_html("test", None).await;
+        // SAFETY: Cleaning up test env var
+        unsafe { std::env::remove_var("CS_PLAYWRIGHT_HTML") };
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("test content"));
+    }
+
+    #[tokio::test]
+    async fn search_gui_empty_query_returns_error() {
+        let args = SearchArgs {
+            query: "   ".to_string(),
+            limit: None,
+            sites: None,
+            debug: None,
+            no_cf: None,
+            cf_url: None,
+            cookie: None,
+            csrin_pages: None,
+            csrin_search: None,
+            no_playwright: None,
+        };
+        let result = search_gui(args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn collect_pairs_handles_string_value() {
+        let json = serde_json::json!("just a string");
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collect_pairs_handles_null_value() {
+        let json = serde_json::json!(null);
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collect_pairs_handles_boolean_value() {
+        let json = serde_json::json!(true);
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collect_pairs_handles_number_value() {
+        let json = serde_json::json!(123.45);
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn filter_results_plus_encoding() {
+        let mut results = vec![models::SearchResult {
+            site: "gog-games".into(),
+            title: "Some Title".into(),
+            url: "https://gog-games.to/game/elden+ring".into(),
+        }];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn filter_results_stripped_spaces() {
+        let mut results = vec![models::SearchResult {
+            site: "gog-games".into(),
+            title: "Some Title".into(),
+            url: "https://gog-games.to/game/eldenring".into(),
+        }];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn collect_pairs_uses_href_field() {
+        let json = serde_json::json!({"title": "Href Game", "href": "/game/href"});
+        let mut out = Vec::new();
+        collect_title_url_pairs(&json, &mut out);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].url.contains("href"));
+    }
+
+    #[tokio::test]
+    async fn search_gui_with_site_filter() {
+        // Test with a specific site filter that should return immediately
+        let args = SearchArgs {
+            query: "test".to_string(),
+            limit: Some(1),
+            sites: Some(vec!["unknown-fake-site".to_string()]),
+            debug: None,
+            no_cf: Some(true),
+            cf_url: None,
+            cookie: None,
+            csrin_pages: None,
+            csrin_search: None,
+            no_playwright: Some(true),
+        };
+        let result = search_gui(args).await;
+        // Should succeed but return empty (no matching site)
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_csrin_playwright_with_cookie() {
+        unsafe { std::env::set_var("CS_PLAYWRIGHT_HTML", "<html>cookie test</html>") };
+        let result = fetch_csrin_playwright_html("test", Some("session=abc".to_string())).await;
+        unsafe { std::env::remove_var("CS_PLAYWRIGHT_HTML") };
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("cookie test"));
+    }
+
+    #[tokio::test]
+    async fn fetch_csrin_playwright_empty_env_returns_none() {
+        unsafe { std::env::set_var("CS_PLAYWRIGHT_HTML", "   ") };
+        let result = fetch_csrin_playwright_html("test", None).await;
+        unsafe { std::env::remove_var("CS_PLAYWRIGHT_HTML") };
+        // Empty env is treated as not set, script doesn't exist in test env
+        assert!(result.is_none());
+    }
 }

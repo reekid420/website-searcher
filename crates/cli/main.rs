@@ -5,6 +5,7 @@ use scraper::{Html, Selector};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+use website_searcher_core::cache::{MIN_CACHE_SIZE, SearchCache};
 use website_searcher_core::{cf, fetcher, output};
 
 use crossterm::event::KeyEventKind;
@@ -106,17 +107,71 @@ struct Cli {
     /// Disable Playwright fallback for cs.rin.ru (forces non-PW backups only)
     #[arg(long, default_value_t = false)]
     no_playwright: bool,
+
+    /// Maximum number of searches to cache (default: 3, max: 20)
+    #[arg(long, default_value_t = MIN_CACHE_SIZE)]
+    cache_size: usize,
+
+    /// Disable search result caching
+    #[arg(long, default_value_t = false)]
+    no_cache: bool,
+
+    /// Clear the search cache and exit
+    #[arg(long, default_value_t = false)]
+    clear_cache: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Cache file path - use platform-appropriate cache directory
+    let cache_path = dirs::cache_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("website-searcher")
+        .join("search_cache.json");
+
+    // Handle --clear-cache flag
+    if cli.clear_cache {
+        if cache_path.exists() {
+            std::fs::remove_file(&cache_path)?;
+            println!("Cache cleared successfully.");
+        } else {
+            println!("No cache to clear.");
+        }
+        return Ok(());
+    }
+
+    // Load or create cache
+    let mut search_cache = if !cli.no_cache && cache_path.exists() {
+        SearchCache::load_from_file_sync(&cache_path)
+            .unwrap_or_else(|_| SearchCache::new(cli.cache_size))
+    } else {
+        SearchCache::new(cli.cache_size)
+    };
+    // Update cache size if specified
+    search_cache.set_max_size(cli.cache_size);
+
     // Interactive prompt when query omitted
     let query_value: String = match &cli.query {
         Some(q) => q.clone(),
         None => {
             println!("Website Searcher (interactive)\n");
+
+            // Show recent searches if any
+            if !search_cache.is_empty() {
+                println!("Recent searches:");
+                for (i, entry) in search_cache.entries_newest_first().enumerate().take(5) {
+                    println!(
+                        "  {}. {} ({} results)",
+                        i + 1,
+                        entry.query,
+                        entry.results.len()
+                    );
+                }
+                println!();
+            }
+
             // Prefer TUI prompt when attached to a TTY; fall back to stdin prompt otherwise
             if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
                 let ans = inquire::Text::new("Search phrase:")
@@ -141,6 +196,38 @@ async fn main() -> Result<()> {
         }
     };
     let normalized = normalize_query(&query_value);
+
+    // Check cache first (unless disabled)
+    if !cli.no_cache
+        && let Some(cached) = search_cache.get(&normalized)
+    {
+        if cli.debug {
+            eprintln!(
+                "[debug] Cache hit for \"{}\" ({} results)",
+                normalized,
+                cached.results.len()
+            );
+        }
+        // Use cached results
+        let combined = cached.results.clone();
+        let out_format = if cli.query.is_none() {
+            OutputFormat::Table
+        } else {
+            cli.format
+        };
+        let interactive_tui = cli.query.is_none()
+            && std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal();
+        if interactive_tui && matches!(out_format, OutputFormat::Table) {
+            run_live_tui(&combined)?;
+        } else {
+            match out_format {
+                OutputFormat::Json => output::print_pretty_json(&combined),
+                OutputFormat::Table => output::print_table_grouped(&combined),
+            }
+        }
+        return Ok(());
+    }
 
     // Resolve CF URL: prefer CLI if non-default; otherwise allow CF_URL env override (for Docker)
     let mut resolved_cf_url = cli.cf_url.clone();
@@ -576,6 +663,22 @@ async fn main() -> Result<()> {
     // Deduplicate by (site, url) then sort
     combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.title.cmp(&b.title)));
     combined.dedup_by(|a, b| a.site == b.site && a.url == b.url);
+
+    // Save to cache (unless disabled)
+    if !cli.no_cache && !combined.is_empty() {
+        search_cache.add(normalized.clone(), combined.clone());
+        if let Err(e) = search_cache.save_to_file_sync(&cache_path) {
+            if cli.debug {
+                eprintln!("[debug] Failed to save cache: {}", e);
+            }
+        } else if cli.debug {
+            eprintln!(
+                "[debug] Cached {} results for \"{}\"",
+                combined.len(),
+                normalized
+            );
+        }
+    }
 
     let out_format = if cli.query.is_none() {
         OutputFormat::Table
@@ -1206,5 +1309,170 @@ mod tests {
         assert!(urls.contains(&"https://gog-games.to/game/three"));
         assert!(titles.contains(&"Four"));
         assert!(urls.contains(&"https://gog-games.to/game/four"));
+    }
+
+    #[test]
+    fn normalize_title_csrin_removes_forum_prefix() {
+        let s = "Main Forum • Elden Ring";
+        assert_eq!(normalize_title("csrin", s), "Elden Ring");
+    }
+
+    #[test]
+    fn normalize_title_csrin_removes_re_prefix() {
+        let s = "Re: Elden Ring Discussion";
+        assert_eq!(normalize_title("csrin", s), "Elden Ring Discussion");
+    }
+
+    #[test]
+    fn normalize_title_csrin_combined() {
+        let s = "Main Forum • Re: Some Game Title";
+        assert_eq!(normalize_title("csrin", s), "Some Game Title");
+    }
+
+    #[test]
+    fn filter_results_strict_requires_gog_path() {
+        let mut results = vec![
+            SearchResult {
+                site: "gog-games".into(),
+                title: "Elden Ring".into(),
+                url: "https://gog-games.to/game/elden-ring".into(),
+            },
+            SearchResult {
+                site: "gog-games".into(),
+                title: "Elden Ring".into(),
+                url: "https://gog-games.to/search?q=elden".into(),
+            },
+        ];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].url.contains("/game/"));
+    }
+
+    #[test]
+    fn filter_results_strict_handles_encoded_queries() {
+        let mut results = vec![SearchResult {
+            site: "gog-games".into(),
+            title: "Some Title".into(),
+            url: "https://gog-games.to/games/elden%20ring-deluxe".into(),
+        }];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn normalize_title_other_site_passthrough() {
+        let s = "Some Game Title";
+        assert_eq!(normalize_title("fitgirl", s), "Some Game Title");
+    }
+
+    #[test]
+    fn normalize_title_ankergames_no_gb_suffix() {
+        let s = "Game Without Size";
+        assert_eq!(normalize_title("ankergames", s), "Game Without Size");
+    }
+
+    #[test]
+    fn normalize_title_csrin_re_without_space() {
+        let s = "Re:Some Topic";
+        assert_eq!(normalize_title("csrin", s), "Some Topic");
+    }
+
+    #[test]
+    fn collect_title_url_pairs_handles_href_field() {
+        let v = serde_json::json!({
+            "title": "Game Href",
+            "href": "/game/href-game"
+        });
+        let mut out = Vec::new();
+        collect_title_url_pairs(&v, &mut out);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].url.contains("href-game"));
+    }
+
+    #[test]
+    fn collect_title_url_pairs_handles_path_field() {
+        let v = serde_json::json!({
+            "name": "Path Game",
+            "path": "/game/path-game"
+        });
+        let mut out = Vec::new();
+        collect_title_url_pairs(&v, &mut out);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].url.contains("path-game"));
+    }
+
+    #[test]
+    fn collect_title_url_pairs_ignores_invalid_types() {
+        let v = serde_json::json!(null);
+        let mut out = Vec::new();
+        collect_title_url_pairs(&v, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collect_title_url_pairs_ignores_boolean() {
+        let v = serde_json::json!(true);
+        let mut out = Vec::new();
+        collect_title_url_pairs(&v, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collect_title_url_pairs_ignores_number() {
+        let v = serde_json::json!(42);
+        let mut out = Vec::new();
+        collect_title_url_pairs(&v, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collect_pairs_skips_missing_url_and_title() {
+        let v = serde_json::json!({
+            "other_field": "value"
+        });
+        let mut out = Vec::new();
+        collect_title_url_pairs(&v, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn filter_results_strict_stripped_query_match() {
+        let mut results = vec![SearchResult {
+            site: "gog-games".into(),
+            title: "Some Title".into(),
+            url: "https://gog-games.to/game/eldenring".into(),
+        }];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn filter_results_strict_games_path() {
+        let mut results = vec![SearchResult {
+            site: "gog-games".into(),
+            title: "Elden Ring".into(),
+            url: "https://gog-games.to/games/elden-ring".into(),
+        }];
+        filter_results_by_query_strict(&mut results, "elden ring");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_csrin_playwright_html_returns_env_var() {
+        // Set env var for test
+        unsafe { std::env::set_var("CS_PLAYWRIGHT_HTML", "<html>mock</html>") };
+        let result = fetch_csrin_playwright_html("test", None).await;
+        unsafe { std::env::remove_var("CS_PLAYWRIGHT_HTML") };
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("mock"));
+    }
+
+    #[tokio::test]
+    async fn fetch_csrin_playwright_html_empty_env_returns_none() {
+        unsafe { std::env::set_var("CS_PLAYWRIGHT_HTML", "   ") };
+        let result = fetch_csrin_playwright_html("test", None).await;
+        unsafe { std::env::remove_var("CS_PLAYWRIGHT_HTML") };
+        // Script won't be found since we're in test, so None
+        assert!(result.is_none());
     }
 }

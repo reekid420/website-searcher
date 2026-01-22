@@ -1,6 +1,6 @@
 [package]
 name = "website-searcher-gui"
-version = "1.0.0"
+version = "1.2.0"
 description = "A Tauri App"
 authors = ["reekid420"]
 license = "MIT"
@@ -43,3 +43,4 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 serde_urlencoded = "0.7"
 urlencoding = "2.1"
+dirs = "6.0"

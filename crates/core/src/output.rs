@@ -90,3 +90,62 @@ impl From<&SearchResult> for DisplayRow {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calc_title_wrap_columns_returns_reasonable_default() {
+        let cols = calc_title_wrap_columns();
+        // Should return at least minimum of 20
+        assert!(cols >= 20);
+    }
+
+    #[test]
+    fn display_row_from_search_result_cleans_url() {
+        let r = SearchResult {
+            site: "test".into(),
+            title: "Test".into(),
+            url: "http://example.com/./path".into(),
+        };
+        let row = DisplayRow::from(&r);
+        assert_eq!(row.url, "http://example.com/path");
+    }
+
+    #[test]
+    fn display_row_preserves_normal_url() {
+        let r = SearchResult {
+            site: "test".into(),
+            title: "Test".into(),
+            url: "http://example.com/normal/path".into(),
+        };
+        let row = DisplayRow::from(&r);
+        assert_eq!(row.url, "http://example.com/normal/path");
+    }
+
+    #[test]
+    fn print_table_grouped_handles_empty() {
+        // Should print "No results." without panic
+        // Just verify it doesn't crash
+        print_table_grouped(&[]);
+    }
+
+    #[test]
+    fn print_pretty_json_handles_empty() {
+        // Should output valid JSON with count 0
+        // Just verify it doesn't crash
+        print_pretty_json(&[]);
+    }
+
+    #[test]
+    fn print_pretty_json_handles_results() {
+        let results = vec![SearchResult {
+            site: "test".into(),
+            title: "Game Title".into(),
+            url: "http://example.com".into(),
+        }];
+        // Just verify it doesn't crash
+        print_pretty_json(&results);
+    }
+}

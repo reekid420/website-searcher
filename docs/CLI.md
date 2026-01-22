@@ -26,24 +26,27 @@ websearcher [OPTIONS] [QUERY]
 
 ## Arguments
 
-| Argument | Description |
-|----------|-------------|
-| `QUERY` | Search term. If omitted, runs in interactive mode. |
+| Argument | Description                                        |
+| -------- | -------------------------------------------------- |
+| `QUERY`  | Search term. If omitted, runs in interactive mode. |
 
 ## Options
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--limit <N>` | Maximum results per site | 10 |
-| `--sites <a,b,c>` | Restrict to specific sites (comma-separated) | all |
-| `--format <json\|table>` | Output format | json |
-| `--debug` | Print diagnostics, write HTML samples to `debug/` | off |
-| `--no-cf` | Disable Cloudflare solver | CF enabled |
-| `--cf_url <URL>` | Override FlareSolverr endpoint | `http://localhost:8191/v1` |
-| `--cookie <STR>` | Forward cookies to requests and solver | none |
-| `--no-playwright` | Disable Playwright fallback for cs.rin.ru | PW enabled |
-| `-h, --help` | Print help | |
-| `-V, --version` | Print version | |
+| Flag                     | Description                                       | Default                    |
+| ------------------------ | ------------------------------------------------- | -------------------------- |
+| `--limit <N>`            | Maximum results per site                          | 10                         |
+| `--sites <a,b,c>`        | Restrict to specific sites (comma-separated)      | all                        |
+| `--format <json\|table>` | Output format                                     | json                       |
+| `--debug`                | Print diagnostics, write HTML samples to `debug/` | off                        |
+| `--no-cf`                | Disable Cloudflare solver                         | CF enabled                 |
+| `--cf_url <URL>`         | Override FlareSolverr endpoint                    | `http://localhost:8191/v1` |
+| `--cookie <STR>`         | Forward cookies to requests and solver            | none                       |
+| `--no-playwright`        | Disable Playwright fallback for cs.rin.ru         | PW enabled                 |
+| `--cache-size <N>`       | Number of searches to cache (3-20)                | 3                          |
+| `--no-cache`             | Disable search result caching                     | cache enabled              |
+| `--clear-cache`          | Clear the search cache and exit                   |                            |
+| `-h, --help`             | Print help                                        |                            |
+| `-V, --version`          | Print version                                     |                            |
 
 ## Interactive Mode
 
@@ -104,13 +107,13 @@ Table output automatically launches a TUI when running interactively:
 
 ### Keybindings
 
-| Key | Action |
-|-----|--------|
-| `↑` / `k` | Move selection up |
-| `↓` / `j` | Move selection down |
-| `Enter` | Open selected URL in browser |
-| `c` | Copy selected URL to clipboard |
-| `q` / `Esc` | Quit TUI |
+| Key         | Action                         |
+| ----------- | ------------------------------ |
+| `↑` / `k`   | Move selection up              |
+| `↓` / `j`   | Move selection down            |
+| `Enter`     | Open selected URL in browser   |
+| `c`         | Copy selected URL to clipboard |
+| `q` / `Esc` | Quit TUI                       |
 
 ### Navigation
 
@@ -134,6 +137,7 @@ websearcher "elden ring" --cf_url http://my-solver:8191/v1
 ```
 
 **Start FlareSolverr locally:**
+
 ```bash
 docker run -d --name flaresolverr -p 8191:8191 \
   ghcr.io/flaresolverr/flaresolverr:latest
@@ -164,9 +168,11 @@ websearcher "elden ring" --sites csrin --no-playwright
 ```
 
 **Environment variables:**
+
 - `CSRIN_PAGES` - Number of result pages to fetch (default: 1)
 
 **Setup Playwright locally:**
+
 ```bash
 npm i -D playwright
 npx playwright install --with-deps
@@ -186,13 +192,13 @@ websearcher "elden ring" --debug
 
 ## Site-Specific Notes
 
-| Site | Notes |
-|------|-------|
-| `gog-games` | CF solver ignored; cookies improve results |
-| `elamigos` | Parses homepage (no search), filters locally |
-| `csrin` | Uses Playwright by default; `CSRIN_PAGES` controls depth |
-| `ankergames` | Uses path-encoded search; falls back to listing page |
-| `f95zone` | Browse-only (search requires auth); parses forum listings |
+| Site         | Notes                                                     |
+| ------------ | --------------------------------------------------------- |
+| `gog-games`  | CF solver ignored; cookies improve results                |
+| `elamigos`   | Parses homepage (no search), filters locally              |
+| `csrin`      | Uses Playwright by default; `CSRIN_PAGES` controls depth  |
+| `ankergames` | Uses path-encoded search; falls back to listing page      |
+| `f95zone`    | Browse-only (search requires auth); parses forum listings |
 
 ## Examples
 
@@ -218,8 +224,8 @@ websearcher
 
 ## Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Error (network, parse, etc.) |
-| 130 | Interrupted (Ctrl+C) |
+| Code | Meaning                      |
+| ---- | ---------------------------- |
+| 0    | Success                      |
+| 1    | Error (network, parse, etc.) |
+| 130  | Interrupted (Ctrl+C)         |

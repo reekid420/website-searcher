@@ -5592,12 +5592,13 @@ dependencies = [
 
 [[package]]
 name = "website-searcher"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
  "crossterm 0.29.0",
+ "dirs",
  "futures",
  "inquire",
  "mockito",
@@ -5615,8 +5616,9 @@ dependencies = [
 
 [[package]]
 name = "website-searcher-gui"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
+ "dirs",
  "futures",
  "log",
  "reqwest",
@@ -5633,7 +5635,7 @@ dependencies = [
 
 [[package]]
 name = "website_searcher_core"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "colored_json",

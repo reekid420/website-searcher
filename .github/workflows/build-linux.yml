@@ -36,6 +36,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set version in source files
+        run: python3 set_version.py "${{ inputs.version || '1.0.0' }}"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

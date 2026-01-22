@@ -1,0 +1,327 @@
+use crate::models::SearchResult;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+/// Minimum cache size (default)
+pub const MIN_CACHE_SIZE: usize = 3;
+/// Maximum cache size
+pub const MAX_CACHE_SIZE: usize = 20;
+
+/// A single cached search entry
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CacheEntry {
+    /// The search query
+    pub query: String,
+    /// The search results
+    pub results: Vec<SearchResult>,
+    /// Unix timestamp when the search was performed
+    pub timestamp: u64,
+}
+
+/// Search result cache with LRU-like behavior
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SearchCache {
+    /// Cached entries, ordered from oldest to newest
+    entries: Vec<CacheEntry>,
+    /// Maximum number of entries to store
+    max_size: usize,
+}
+
+impl SearchCache {
+    /// Create a new empty cache with the specified max size
+    pub fn new(max_size: usize) -> Self {
+        let max_size = max_size.clamp(MIN_CACHE_SIZE, MAX_CACHE_SIZE);
+        Self {
+            entries: Vec::new(),
+            max_size,
+        }
+    }
+
+    /// Create a new cache with default size (3)
+    pub fn with_default_size() -> Self {
+        Self::new(MIN_CACHE_SIZE)
+    }
+
+    /// Get the current number of cached entries
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Check if the cache is empty
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Get the current max size
+    pub fn max_size(&self) -> usize {
+        self.max_size
+    }
+
+    /// Set the max size (clamped to 3-20)
+    pub fn set_max_size(&mut self, size: usize) {
+        self.max_size = size.clamp(MIN_CACHE_SIZE, MAX_CACHE_SIZE);
+        // Evict entries if we now exceed the new max
+        while self.entries.len() > self.max_size {
+            self.entries.remove(0);
+        }
+    }
+
+    /// Get cached results for a query (case-insensitive match)
+    pub fn get(&self, query: &str) -> Option<&CacheEntry> {
+        let query_lower = query.to_lowercase();
+        self.entries
+            .iter()
+            .find(|e| e.query.to_lowercase() == query_lower)
+    }
+
+    /// Add a search to the cache
+    /// If the query already exists, it's updated and moved to the end (most recent)
+    pub fn add(&mut self, query: String, results: Vec<SearchResult>) {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Remove existing entry for this query (case-insensitive)
+        let query_lower = query.to_lowercase();
+        self.entries
+            .retain(|e| e.query.to_lowercase() != query_lower);
+
+        // Add new entry at the end
+        self.entries.push(CacheEntry {
+            query,
+            results,
+            timestamp,
+        });
+
+        // Evict oldest if we exceed max size
+        while self.entries.len() > self.max_size {
+            self.entries.remove(0);
+        }
+    }
+
+    /// Remove a specific entry by query
+    pub fn remove(&mut self, query: &str) -> bool {
+        let query_lower = query.to_lowercase();
+        let before = self.entries.len();
+        self.entries
+            .retain(|e| e.query.to_lowercase() != query_lower);
+        self.entries.len() < before
+    }
+
+    /// Clear all cached entries
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Get all entries (oldest first)
+    pub fn entries(&self) -> &[CacheEntry] {
+        &self.entries
+    }
+
+    /// Get entries in reverse order (newest first)
+    pub fn entries_newest_first(&self) -> impl Iterator<Item = &CacheEntry> {
+        self.entries.iter().rev()
+    }
+
+    /// Load cache from a JSON file
+    pub async fn load_from_file(path: &Path) -> anyhow::Result<Self> {
+        let content = tokio::fs::read_to_string(path).await?;
+        let cache: SearchCache = serde_json::from_str(&content)?;
+        Ok(cache)
+    }
+
+    /// Save cache to a JSON file
+    pub async fn save_to_file(&self, path: &Path) -> anyhow::Result<()> {
+        // Ensure parent directory exists
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let content = serde_json::to_string_pretty(self)?;
+        tokio::fs::write(path, content).await?;
+        Ok(())
+    }
+
+    /// Load cache from file synchronously
+    pub fn load_from_file_sync(path: &Path) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let cache: SearchCache = serde_json::from_str(&content)?;
+        Ok(cache)
+    }
+
+    /// Save cache to file synchronously
+    pub fn save_to_file_sync(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_result(site: &str, title: &str) -> SearchResult {
+        SearchResult {
+            site: site.to_string(),
+            title: title.to_string(),
+            url: format!("https://example.com/{}", title.replace(' ', "-")),
+        }
+    }
+
+    #[test]
+    fn cache_new_with_default_size() {
+        let cache = SearchCache::with_default_size();
+        assert_eq!(cache.max_size(), MIN_CACHE_SIZE);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn cache_new_clamps_size() {
+        let too_small = SearchCache::new(1);
+        assert_eq!(too_small.max_size(), MIN_CACHE_SIZE);
+
+        let too_large = SearchCache::new(100);
+        assert_eq!(too_large.max_size(), MAX_CACHE_SIZE);
+
+        let just_right = SearchCache::new(10);
+        assert_eq!(just_right.max_size(), 10);
+    }
+
+    #[test]
+    fn cache_add_and_get() {
+        let mut cache = SearchCache::with_default_size();
+        let results = vec![make_result("fitgirl", "Elden Ring")];
+
+        cache.add("elden ring".to_string(), results.clone());
+
+        let entry = cache.get("elden ring").expect("should find entry");
+        assert_eq!(entry.query, "elden ring");
+        assert_eq!(entry.results, results);
+    }
+
+    #[test]
+    fn cache_get_is_case_insensitive() {
+        let mut cache = SearchCache::with_default_size();
+        cache.add(
+            "Elden Ring".to_string(),
+            vec![make_result("fitgirl", "Elden Ring")],
+        );
+
+        assert!(cache.get("elden ring").is_some());
+        assert!(cache.get("ELDEN RING").is_some());
+        assert!(cache.get("Elden Ring").is_some());
+    }
+
+    #[test]
+    fn cache_evicts_oldest_when_full() {
+        let mut cache = SearchCache::new(3);
+
+        cache.add("query1".to_string(), vec![]);
+        cache.add("query2".to_string(), vec![]);
+        cache.add("query3".to_string(), vec![]);
+
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get("query1").is_some());
+
+        // Add a 4th entry, should evict query1
+        cache.add("query4".to_string(), vec![]);
+
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get("query1").is_none());
+        assert!(cache.get("query2").is_some());
+        assert!(cache.get("query3").is_some());
+        assert!(cache.get("query4").is_some());
+    }
+
+    #[test]
+    fn cache_update_moves_to_end() {
+        let mut cache = SearchCache::new(3);
+
+        cache.add("query1".to_string(), vec![]);
+        cache.add("query2".to_string(), vec![]);
+        cache.add("query3".to_string(), vec![]);
+
+        // Re-add query1, should move to end
+        cache.add("query1".to_string(), vec![make_result("dodi", "Game")]);
+
+        let entries: Vec<_> = cache.entries_newest_first().collect();
+        assert_eq!(entries[0].query, "query1");
+        assert_eq!(entries[0].results.len(), 1);
+    }
+
+    #[test]
+    fn cache_clear_removes_all() {
+        let mut cache = SearchCache::with_default_size();
+        cache.add("query1".to_string(), vec![]);
+        cache.add("query2".to_string(), vec![]);
+
+        assert_eq!(cache.len(), 2);
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn cache_remove_specific_entry() {
+        let mut cache = SearchCache::with_default_size();
+        cache.add("query1".to_string(), vec![]);
+        cache.add("query2".to_string(), vec![]);
+
+        assert!(cache.remove("query1"));
+        assert!(cache.get("query1").is_none());
+        assert!(cache.get("query2").is_some());
+
+        // Removing non-existent returns false
+        assert!(!cache.remove("nonexistent"));
+    }
+
+    #[test]
+    fn cache_set_max_size_evicts_if_needed() {
+        let mut cache = SearchCache::new(5);
+        for i in 1..=5 {
+            cache.add(format!("query{}", i), vec![]);
+        }
+        assert_eq!(cache.len(), 5);
+
+        cache.set_max_size(3);
+        assert_eq!(cache.max_size(), 3);
+        assert_eq!(cache.len(), 3);
+
+        // First two should be evicted
+        assert!(cache.get("query1").is_none());
+        assert!(cache.get("query2").is_none());
+        assert!(cache.get("query3").is_some());
+    }
+
+    #[test]
+    fn cache_serialization_roundtrip() {
+        let mut cache = SearchCache::new(5);
+        cache.add(
+            "elden ring".to_string(),
+            vec![make_result("fitgirl", "Elden Ring")],
+        );
+        cache.add("baldurs gate 3".to_string(), vec![]);
+
+        let json = serde_json::to_string(&cache).unwrap();
+        let restored: SearchCache = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.len(), 2);
+        assert!(restored.get("elden ring").is_some());
+        assert!(restored.get("baldurs gate 3").is_some());
+    }
+
+    #[test]
+    fn cache_entries_newest_first() {
+        let mut cache = SearchCache::with_default_size();
+        cache.add("first".to_string(), vec![]);
+        cache.add("second".to_string(), vec![]);
+        cache.add("third".to_string(), vec![]);
+
+        let queries: Vec<_> = cache.entries_newest_first().map(|e| &e.query).collect();
+        assert_eq!(queries, vec!["third", "second", "first"]);
+    }
+}
