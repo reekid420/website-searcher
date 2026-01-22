@@ -36,7 +36,7 @@ jobs:
       - name: Install base dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git curl rustup pkg-config openssl gtk3 webkit2gtk-4.1 libappindicator-gtk3 librsvg fakeroot sudo
+          pacman -S --noconfirm base-devel git curl rustup pkg-config openssl gtk3 webkit2gtk-4.1 libappindicator-gtk3 librsvg fakeroot sudo python
 
       - name: Checkout
         uses: actions/checkout@v4

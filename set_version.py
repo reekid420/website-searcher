@@ -37,13 +37,13 @@ def update_cargo_toml(file_path: Path, new_version: str) -> bool:
         
         if content != original:
             file_path.write_text(content, encoding='utf-8')
-            print(f'✓ Updated {file_path}')
+            print(f'[OK] Updated {file_path}')
             return True
         else:
-            print(f'⚠ No changes in {file_path}')
+            print(f'[--] No changes in {file_path}')
             return False
     except Exception as e:
-        print(f'✗ Error updating {file_path}: {e}')
+        print(f'[ERR] Error updating {file_path}: {e}')
         return False
 
 
@@ -61,13 +61,13 @@ def update_package_json(file_path: Path, new_version: str) -> bool:
         
         if updated != content:
             file_path.write_text(updated, encoding='utf-8')
-            print(f'✓ Updated {file_path}')
+            print(f'[OK] Updated {file_path}')
             return True
         else:
-            print(f'⚠ No changes in {file_path}')
+            print(f'[--] No changes in {file_path}')
             return False
     except Exception as e:
-        print(f'✗ Error updating {file_path}: {e}')
+        print(f'[ERR] Error updating {file_path}: {e}')
         return False
 
 
@@ -85,13 +85,13 @@ def update_tauri_conf(file_path: Path, new_version: str) -> bool:
         
         if updated != content:
             file_path.write_text(updated, encoding='utf-8')
-            print(f'✓ Updated {file_path}')
+            print(f'[OK] Updated {file_path}')
             return True
         else:
-            print(f'⚠ No changes in {file_path}')
+            print(f'[--] No changes in {file_path}')
             return False
     except Exception as e:
-        print(f'✗ Error updating {file_path}: {e}')
+        print(f'[ERR] Error updating {file_path}: {e}')
         return False
 
 
@@ -139,7 +139,7 @@ def main():
         if update_tauri_conf(tauri_conf, new_version):
             updated_count += 1
     
-    print(f'\n✓ Updated {updated_count} files to version {new_version}')
+    print(f'\n[OK] Updated {updated_count} files to version {new_version}')
     print('\nRun `cargo update` or `python compile.py` to apply changes.')
 
 
