@@ -95,9 +95,8 @@ jobs:
 
           mkdir -p dist
 
-          # Copy standalone exe
+          # Copy standalone CLI exe
           cp target/release/website-searcher.exe "dist/website-searcher-${VERSION}-windows-${ARCH}.exe"
-          cp target/release/website-searcher-gui.exe "dist/website-searcher-gui-${VERSION}-windows-${ARCH}.exe"
 
           # Copy MSI with versioned name
           for msi in target/release/bundle/msi/*.msi; do
@@ -105,6 +104,13 @@ jobs:
               cp "$msi" "dist/website-searcher-${VERSION}-windows-${ARCH}.msi"
             fi
           done
+
+          # Zip the GUI exe for standalone distribution (portable GUI)
+          if [ -f "target/release/website-searcher-gui.exe" ]; then
+            cd target/release
+            zip "../../dist/website-searcher-gui-${VERSION}-windows-${ARCH}.zip" website-searcher-gui.exe
+            cd ../..
+          fi
 
           ls -la dist/
 

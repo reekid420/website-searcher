@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use crate::rate_limiter::RateLimiter;
 use crate::monitoring::get_metrics;
+use crate::rate_limiter::RateLimiter;
 use anyhow::{Context, Result};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use tokio::time::sleep;
-use tracing::{debug, warn, info, error, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 pub fn build_http_client() -> Client {
     Client::builder()
@@ -38,7 +38,8 @@ pub async fn fetch_with_retry(
     while attempt < max_attempts {
         // Apply rate limiting if provided
         if let Some(limiter) = rate_limiter.as_mut()
-            && let Err(e) = limiter.wait_for_site(site).await {
+            && let Err(e) = limiter.wait_for_site(site).await
+        {
             return Err(anyhow::anyhow!("Rate limit error: {}", e));
         }
 
@@ -46,19 +47,30 @@ pub async fn fetch_with_retry(
         info!(site = site, attempt = attempt + 1, "Sending HTTP request");
         let resp = client.get(url).send().await;
         let response_time = start_time.elapsed();
-        
+
         // Record metrics
-        get_metrics().record_request(site, response_time, resp.is_ok()).await;
+        get_metrics()
+            .record_request(site, response_time, resp.is_ok())
+            .await;
 
         match resp {
             Ok(r) => {
                 let status = r.status();
-                info!(site = site, status = status.as_u16(), response_time_ms = response_time.as_millis(), "Received response");
-                
+                info!(
+                    site = site,
+                    status = status.as_u16(),
+                    response_time_ms = response_time.as_millis(),
+                    "Received response"
+                );
+
                 match status {
                     StatusCode::OK => {
                         let body = r.text().await.context("Failed to read response body")?;
-                        debug!(site = site, body_length = body.len(), "Successfully fetched body");
+                        debug!(
+                            site = site,
+                            body_length = body.len(),
+                            "Successfully fetched body"
+                        );
                         return Ok(body);
                     }
                     StatusCode::TOO_MANY_REQUESTS => {
@@ -78,8 +90,14 @@ pub async fn fetch_with_retry(
                         // Return empty string for not found errors
                         return Ok(String::new());
                     }
-                    StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT => {
-                        warn!(site = site, status = status.as_u16(), "Server error, will retry");
+                    StatusCode::SERVICE_UNAVAILABLE
+                    | StatusCode::BAD_GATEWAY
+                    | StatusCode::GATEWAY_TIMEOUT => {
+                        warn!(
+                            site = site,
+                            status = status.as_u16(),
+                            "Server error, will retry"
+                        );
                         last_err = Some(anyhow::anyhow!("Server error: {}", status));
                         // Exponential backoff for server errors
                         let backoff = Duration::from_millis(500 * (2_u64.pow(attempt)));
@@ -88,7 +106,11 @@ pub async fn fetch_with_retry(
                     _ => {
                         // Handle redirection codes by returning empty string
                         if status.is_redirection() {
-                            debug!(site = site, status = status.as_u16(), "Redirection received");
+                            debug!(
+                                site = site,
+                                status = status.as_u16(),
+                                "Redirection received"
+                            );
                             return Ok(String::new());
                         }
                         warn!(site = site, status = status.as_u16(), "Unexpected status");
@@ -135,7 +157,8 @@ pub async fn fetch_with_retry_headers(
     while attempt < max_attempts {
         // Apply rate limiting if provided
         if let Some(limiter) = rate_limiter.as_mut()
-            && let Err(e) = limiter.wait_for_site(site).await {
+            && let Err(e) = limiter.wait_for_site(site).await
+        {
             return Err(anyhow::anyhow!("Rate limit error: {}", e));
         }
 
@@ -150,12 +173,21 @@ pub async fn fetch_with_retry_headers(
         match resp {
             Ok(r) => {
                 let status = r.status();
-                info!(site = site, status = status.as_u16(), response_time_ms = response_time.as_millis(), "Received response");
-                
+                info!(
+                    site = site,
+                    status = status.as_u16(),
+                    response_time_ms = response_time.as_millis(),
+                    "Received response"
+                );
+
                 match status {
                     StatusCode::OK => {
                         let body = r.text().await.context("Failed to read response body")?;
-                        debug!(site = site, body_length = body.len(), "Successfully fetched body");
+                        debug!(
+                            site = site,
+                            body_length = body.len(),
+                            "Successfully fetched body"
+                        );
                         return Ok(body);
                     }
                     StatusCode::TOO_MANY_REQUESTS => {
@@ -175,8 +207,14 @@ pub async fn fetch_with_retry_headers(
                         // Return empty string for not found errors
                         return Ok(String::new());
                     }
-                    StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT => {
-                        warn!(site = site, status = status.as_u16(), "Server error, will retry");
+                    StatusCode::SERVICE_UNAVAILABLE
+                    | StatusCode::BAD_GATEWAY
+                    | StatusCode::GATEWAY_TIMEOUT => {
+                        warn!(
+                            site = site,
+                            status = status.as_u16(),
+                            "Server error, will retry"
+                        );
                         last_err = Some(anyhow::anyhow!("Server error: {}", status));
                         // Exponential backoff for server errors
                         let backoff = Duration::from_millis(500 * (2_u64.pow(attempt)));
@@ -185,7 +223,11 @@ pub async fn fetch_with_retry_headers(
                     _ => {
                         // Handle redirection codes by returning empty string
                         if status.is_redirection() {
-                            debug!(site = site, status = status.as_u16(), "Redirection received");
+                            debug!(
+                                site = site,
+                                status = status.as_u16(),
+                                "Redirection received"
+                            );
                             return Ok(String::new());
                         }
                         warn!(site = site, status = status.as_u16(), "Unexpected status");

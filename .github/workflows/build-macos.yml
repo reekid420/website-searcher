@@ -61,10 +61,10 @@ jobs:
           TRIPLE=$(rustc -Vv | awk '/host:/{print $2}')
           cp target/release/website-searcher src-tauri/bin/website-searcher-$TRIPLE
 
-      - name: Build Tauri (dmg)
+      - name: Build Tauri (app,dmg)
         uses: tauri-apps/tauri-action@v0
         with:
-          args: --bundles dmg
+          args: --bundles app,dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -75,7 +75,7 @@ jobs:
 
           mkdir -p dist
 
-          # Copy standalone binary
+          # Copy standalone CLI binary
           cp target/release/website-searcher "dist/website-searcher-${VERSION}-macos-${ARCH}"
 
           # Copy DMG
@@ -84,6 +84,17 @@ jobs:
               cp "$dmg" "dist/website-searcher-${VERSION}-macos-${ARCH}.dmg"
             fi
           done
+
+          # Zip the .app bundle for standalone distribution (portable GUI)
+          if [ -d "target/release/bundle/macos" ]; then
+            for app in target/release/bundle/macos/*.app; do
+              if [ -d "$app" ]; then
+                cd target/release/bundle/macos
+                zip -r "../../../../dist/website-searcher-gui-${VERSION}-macos-${ARCH}.app.zip" "$(basename "$app")"
+                cd ../../../..
+              fi
+            done
+          fi
 
           ls -la dist/
 

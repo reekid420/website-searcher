@@ -297,6 +297,17 @@ def ensure_cargo_in_path() -> None:
         if str(cargo_bin) not in os.environ.get("PATH", ""):
             os.environ["PATH"] = f"{cargo_bin}{path_sep}{os.environ.get('PATH', '')}"
 
+def ensure_node_modules() -> None:
+    """Ensure node_modules are set up."""
+    step("Node modules setup")
+    
+    if not command_exists("pnpm"):
+        print_and_log(f"{YELLOW}pnpm not found; skipping node_modules check{RESET}")
+        return
+
+    print_and_log("Running pnpm install in root...")
+    run_cmd(["pnpm", "install"])
+
 def cleanup_old_logs(max_logs: int = 3) -> None:
     """Keep only the N most recent log files, delete older ones."""
     log_pattern = "compile-script-*.log"
@@ -496,7 +507,7 @@ def build_tauri(want_deb: bool = False, want_rpm: bool = False) -> None:
     if system == "Windows":
         bundles = "msi"
     elif system == "Darwin":
-        bundles = "dmg"
+        bundles = "app,dmg"
     else:  # Linux
         normalize_linux_scripts()
         bundles = determine_linux_bundles(want_deb, want_rpm)
@@ -589,6 +600,10 @@ def main() -> int:
     try:
         # Ensure cargo is in PATH
         ensure_cargo_in_path()
+        
+        # Ensure node_modules (pnpm)
+        ensure_node_modules()
+
         
         # Format check
         check_formatting()

@@ -56,6 +56,18 @@ python compile.py
 **Manual WiX Build:**
 If Tauri build fails, compile.py attempts manual WiX linking using cached WiX tools.
 
+### Windows Portable GUI (Zipped)
+
+```bash
+python compile.py
+# Output: target/release/website-searcher-gui.exe (zipped in CI)
+```
+
+**Notes:**
+- GUI executable zipped for standalone distribution
+- No installer required - just unzip and run
+- Equivalent to Linux AppImage for Windows users
+
 ### macOS DMG
 
 ```bash
@@ -66,6 +78,19 @@ python compile.py
 **Contents:**
 - `website-searcher.app` - Application bundle
 - `ws` - Alias script in Contents/MacOS
+
+### macOS App Bundle (Standalone GUI)
+
+```bash
+python compile.py
+# Output: target/release/bundle/macos/website-searcher.app
+```
+
+**Notes:**
+- Built alongside DMG automatically
+- Self-contained `.app` folder
+- Can be zipped for standalone distribution
+- Equivalent to Linux AppImage for macOS users
 
 ### Linux AppImage
 
@@ -199,8 +224,8 @@ GitHub Actions builds packages automatically:
 | Workflow | Platforms |
 |----------|-----------|
 | `ci.yml` | All (test only) |
-| `build-windows.yml` | MSI |
-| `build-macos.yml` | DMG |
+| `build-windows.yml` | MSI, Portable GUI (.zip) |
+| `build-macos.yml` | DMG, App Bundle (.app.zip) |
 | `build-linux.yml` | AppImage, deb, rpm |
 | `release-all.yml` | All platforms |
 

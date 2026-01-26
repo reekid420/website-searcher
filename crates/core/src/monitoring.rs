@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use metrics::{counter, gauge};
+use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{Level, debug, info, span};
 
@@ -35,14 +35,17 @@ pub fn init_monitoring_with_json(json_output: bool) -> anyhow::Result<()> {
 
     // Try to initialize metrics exporter on port 9898, fall back to random port if occupied
     let port = find_available_port(9898).unwrap_or(9899);
-    
+
     metrics_exporter_prometheus::PrometheusBuilder::new()
         .with_http_listener(([0, 0, 0, 0], port))
         .install()?;
 
     if !json_output {
         info!("Monitoring system initialized");
-        info!("Metrics endpoint available at http://localhost:{}/metrics", port);
+        info!(
+            "Metrics endpoint available at http://localhost:{}/metrics",
+            port
+        );
     }
 
     Ok(())
@@ -115,7 +118,7 @@ impl SearchMetrics {
         // Initialize global metrics
         counter!("website_searcher_starts");
         gauge!("website_searcher_active_requests");
-        
+
         Self {
             total_requests: 0,
             successful_requests: 0,
@@ -132,16 +135,16 @@ impl SearchMetrics {
         // Update Prometheus metrics
         counter!("website_searcher_searches_total", "site" => site_name.to_string());
         counter!("website_searcher_active_requests", "site" => site_name.to_string());
-        
+
         if success {
             counter!("website_searcher_searches_success_total", "site" => site_name.to_string());
         } else {
             counter!("website_searcher_searches_failure_total", "site" => site_name.to_string());
         }
-        
+
         counter!("website_searcher_search_duration", "site" => site_name.to_string());
         counter!("website_searcher_active_requests_complete", "site" => site_name.to_string());
-        
+
         // Update internal metrics
         let mut site_metrics = self.site_metrics.write().await;
         let site_metric = site_metrics.entry(site_name.to_string()).or_default();
@@ -158,8 +161,7 @@ impl SearchMetrics {
         let total_time_ms = site_metric.avg_response_time.as_millis() as u64
             * (site_metric.requests - 1)
             + duration.as_millis() as u64;
-        site_metric.avg_response_time =
-            Duration::from_millis(total_time_ms / site_metric.requests);
+        site_metric.avg_response_time = Duration::from_millis(total_time_ms / site_metric.requests);
     }
 
     pub fn record_cache_hit(&self) {
@@ -175,11 +177,11 @@ impl SearchMetrics {
     pub async fn get_site_metrics(&self, site: &str) -> Option<SiteMetrics> {
         self.site_metrics.read().await.get(site).cloned()
     }
-    
+
     pub async fn get_all_site_metrics(&self) -> std::collections::HashMap<String, SiteMetrics> {
         self.site_metrics.read().await.clone()
     }
-    
+
     pub fn uptime(&self) -> Duration {
         self.start_time.elapsed()
     }
@@ -189,13 +191,13 @@ impl SearchMetrics {
         let total_requests: u64 = site_metrics.values().map(|m| m.requests).sum();
         let total_successes: u64 = site_metrics.values().map(|m| m.successes).sum();
         let total_failures: u64 = site_metrics.values().map(|m| m.failures).sum();
-        
+
         let success_rate = if total_requests > 0 {
             total_successes as f64 / total_requests as f64 * 100.0
         } else {
             0.0
         };
-        
+
         info!(
             uptime_seconds = self.uptime().as_secs(),
             requests = total_requests,
@@ -211,7 +213,7 @@ impl SearchMetrics {
             } else {
                 0.0
             };
-            
+
             info!(
                 site = site,
                 requests = metrics.requests,
@@ -283,10 +285,14 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_recording() {
         let metrics = SearchMetrics::new();
-        
-        metrics.record_request("test-site", Duration::from_millis(100), true).await;
-        metrics.record_request("test-site", Duration::from_millis(200), false).await;
-        
+
+        metrics
+            .record_request("test-site", Duration::from_millis(100), true)
+            .await;
+        metrics
+            .record_request("test-site", Duration::from_millis(200), false)
+            .await;
+
         let site_metrics = metrics.get_site_metrics("test-site").await.unwrap();
         assert_eq!(site_metrics.requests, 2);
         assert_eq!(site_metrics.successes, 1);

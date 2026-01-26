@@ -148,14 +148,16 @@ impl RateLimiter {
     /// Record a failed request and apply backoff
     pub fn record_failure(&mut self, site: &str) -> Result<(), RateLimitError> {
         // Ensure site state exists
-        self.sites.entry(site.to_string()).or_insert_with(|| SiteRateState {
-            last_request: Instant::now(),
-            current_delay: self.base_delay,
-            failure_count: 0,
-            avg_response_time: Duration::from_millis(500),
-            response_samples: Vec::new(),
-        });
-        
+        self.sites
+            .entry(site.to_string())
+            .or_insert_with(|| SiteRateState {
+                last_request: Instant::now(),
+                current_delay: self.base_delay,
+                failure_count: 0,
+                avg_response_time: Duration::from_millis(500),
+                response_samples: Vec::new(),
+            });
+
         if let Some(state) = self.sites.get_mut(site) {
             state.failure_count += 1;
 

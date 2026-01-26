@@ -3,7 +3,7 @@ use crate::monitoring::get_metrics;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{debug, info, warn, instrument};
+use tracing::{debug, info, instrument, warn};
 
 /// Minimum cache size (default)
 pub const MIN_CACHE_SIZE: usize = 3;
@@ -41,7 +41,7 @@ impl CacheEntry {
 
         // Check if the entry is older than its TTL
         let expired = now.saturating_sub(self.timestamp) > self.ttl;
-        
+
         if expired {
             debug!(
                 query = %self.query,
@@ -50,7 +50,7 @@ impl CacheEntry {
                 "Cache entry expired"
             );
         }
-        
+
         expired
     }
 
@@ -127,8 +127,9 @@ impl SearchCache {
     #[instrument(skip(self), fields(query = %query))]
     pub fn get(&self, query: &str) -> Option<&CacheEntry> {
         let query_lower = query.to_lowercase();
-        
-        if let Some(entry) = self.entries
+
+        if let Some(entry) = self
+            .entries
             .iter()
             .find(|e| e.query.to_lowercase() == query_lower && !e.is_expired())
         {

@@ -100,7 +100,14 @@ async fn sites_filter_only_selected_sites_queried() {
 #[test]
 fn unknown_sites_graceful_json_empty() {
     let mut cmd = Command::cargo_bin("website-searcher").unwrap();
-    cmd.args(["elden ring", "--sites", "nosuchsite", "--format", "json", "--no-cache"]);
+    cmd.args([
+        "elden ring",
+        "--sites",
+        "nosuchsite",
+        "--format",
+        "json",
+        "--no-cache",
+    ]);
     cmd.env("NO_COLOR", "1");
 
     let assert = cmd.assert().success();
