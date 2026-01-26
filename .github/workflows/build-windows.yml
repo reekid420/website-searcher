@@ -88,31 +88,27 @@ jobs:
           }
 
       - name: Stage artifacts with version
-        shell: bash
+        shell: pwsh
         run: |
-          VERSION="${{ inputs.version || '1.0.0' }}"
-          ARCH="${{ matrix.arch }}"
+          $VERSION = "${{ inputs.version || '1.0.0' }}"
+          $ARCH = "${{ matrix.arch }}"
 
-          mkdir -p dist
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
 
           # Copy standalone CLI exe
-          cp target/release/website-searcher.exe "dist/website-searcher-${VERSION}-windows-${ARCH}.exe"
+          Copy-Item "target/release/website-searcher.exe" "dist/website-searcher-$VERSION-windows-$ARCH.exe"
 
           # Copy MSI with versioned name
-          for msi in target/release/bundle/msi/*.msi; do
-            if [ -f "$msi" ]; then
-              cp "$msi" "dist/website-searcher-${VERSION}-windows-${ARCH}.msi"
-            fi
-          done
+          Get-ChildItem -Path "target/release/bundle/msi" -Filter "*.msi" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName "dist/website-searcher-$VERSION-windows-$ARCH.msi"
+          }
 
           # Zip the GUI exe for standalone distribution (portable GUI)
-          if [ -f "target/release/website-searcher-gui.exe" ]; then
-            cd target/release
-            zip "../../dist/website-searcher-gui-${VERSION}-windows-${ARCH}.zip" website-searcher-gui.exe
-            cd ../..
-          fi
+          if (Test-Path "target/release/website-searcher-gui.exe") {
+            Compress-Archive -Path "target/release/website-searcher-gui.exe" -DestinationPath "dist/website-searcher-gui-$VERSION-windows-$ARCH.zip" -Force
+          }
 
-          ls -la dist/
+          Get-ChildItem dist
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
