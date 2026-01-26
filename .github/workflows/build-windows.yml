@@ -97,6 +97,7 @@ jobs:
 
           # Copy standalone exe
           cp target/release/website-searcher.exe "dist/website-searcher-${VERSION}-windows-${ARCH}.exe"
+          cp target/release/website-searcher-gui.exe "dist/website-searcher-gui-${VERSION}-windows-${ARCH}.exe"
 
           # Copy MSI with versioned name
           for msi in target/release/bundle/msi/*.msi; do

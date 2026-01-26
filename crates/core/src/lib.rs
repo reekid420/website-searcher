@@ -1,3 +1,5 @@
+pub mod analyzer;
+pub mod anti_detection;
 pub mod cache;
 pub mod cf;
 pub mod config;
@@ -7,4 +9,6 @@ pub mod monitoring;
 pub mod output;
 pub mod parser;
 pub mod query;
+pub mod query_parser;
 pub mod rate_limiter;
+pub mod resilience;

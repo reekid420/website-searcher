@@ -103,6 +103,7 @@ jobs:
 
           # Copy standalone binary
           cp target/release/website-searcher "dist/website-searcher-${VERSION}-linux-${ARCH}"
+          cp target/release/website-searcher-gui "dist/website-searcher-gui-${VERSION}-linux-${ARCH}"
 
           # Copy tarball
           cp *.tar.zst dist/ 2>/dev/null || true
