@@ -59,7 +59,7 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo clippy --all-targets -- -D warnings
-          cargo install cargo-nextest
+          cargo install --locked cargo-nextest
           cargo nextest run --all --locked || cargo test --all --locked
 
       - uses: actions/setup-node@v4
