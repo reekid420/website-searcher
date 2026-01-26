@@ -16,6 +16,7 @@ fn csrin_playwright_runs_and_prints_header() {
         "--no-cf",
         "--limit",
         "1",
+        "--no-cache",
     ]);
     cmd.env("NO_COLOR", "1");
     // Provide a small stub HTML so Playwright spawning is skipped and test runs fast

@@ -500,7 +500,7 @@ mod tests {
 
         // Remaining TTL should be approximately 11 hours
         let remaining = entry.remaining_ttl();
-        assert!(remaining >= 11 * 60 * 60 - 10 && remaining <= 11 * 60 * 60 + 10);
+        assert!((11 * 60 * 60 - 10..=11 * 60 * 60 + 10).contains(&remaining));
     }
 
     #[test]

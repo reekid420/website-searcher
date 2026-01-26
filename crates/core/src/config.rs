@@ -360,6 +360,9 @@ title_attr = "text"
 url_attr = "href"
 requires_js = false
 requires_cloudflare = false
+timeout_seconds = 60
+retry_attempts = 5
+rate_limit_delay_ms = 2000
 "#;
 
         std::fs::write(&config_path, config_content).unwrap();

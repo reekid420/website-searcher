@@ -11,6 +11,7 @@ Options:
     -e, --e2e       Run E2E tests only
     -c, --coverage  Generate coverage reports
     -v, --verbose   Show full output
+    -l, --log       Enable logging to timestamped file (always shows in terminal too)
     -a, --audit     Run cargo audit
     --all           Run all tests (default if no specific option given)
 """
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import io
 import os
 import platform
 import re
@@ -37,6 +39,9 @@ RESET = "\033[0m"
 
 # Global state
 VERBOSE: bool = False
+LOG_ENABLED: bool = False
+LOG_FILE: Optional[Path] = None
+LOG_HANDLE: Optional[io.TextIOWrapper] = None
 
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
@@ -46,29 +51,53 @@ def strip_ansi(text: str) -> str:
     return ANSI_ESCAPE.sub('', text)
 
 
+def log_write(text: str) -> None:
+    """Write to log file if enabled, stripping ANSI codes."""
+    global LOG_HANDLE
+    if LOG_HANDLE:
+        LOG_HANDLE.write(strip_ansi(text))
+        LOG_HANDLE.flush()
+
+
+def print_and_log(text: str) -> None:
+    """Print to terminal and optionally log."""
+    print(text)
+    log_write(text + "\n")
+
+
 def step(name: str) -> None:
     """Print a step header."""
-    print(f"{GREEN}==> {name}{RESET}")
+    msg = f"{GREEN}==> {name}{RESET}"
+    print(msg)
+    log_write(f"==> {name}\n")
 
 
 def info(msg: str) -> None:
     """Print info message."""
-    print(f"{CYAN}    {msg}{RESET}")
+    text = f"{CYAN}    {msg}{RESET}"
+    print(text)
+    log_write(f"    {msg}\n")
 
 
 def warn(msg: str) -> None:
     """Print warning message."""
-    print(f"{YELLOW}    Warning: {msg}{RESET}")
+    text = f"{YELLOW}    Warning: {msg}{RESET}"
+    print(text)
+    log_write(f"    Warning: {msg}\n")
 
 
 def error(msg: str) -> None:
     """Print error message."""
-    print(f"{RED}    Error: {msg}{RESET}")
+    text = f"{RED}    Error: {msg}{RESET}"
+    print(text)
+    log_write(f"    Error: {msg}\n")
 
 
 def success(msg: str) -> None:
     """Print success message."""
-    print(f"{GREEN}    ✓ {msg}{RESET}")
+    text = f"{GREEN}    ✓ {msg}{RESET}"
+    print(text)
+    log_write(f"    ✓ {msg}\n")
 
 
 def run_cmd(cmd, shell: bool = False, check: bool = True,
@@ -145,6 +174,35 @@ def ensure_cargo_in_path() -> None:
         path_sep = ";" if platform.system() == "Windows" else ":"
         if str(cargo_bin) not in os.environ.get("PATH", ""):
             os.environ["PATH"] = f"{cargo_bin}{path_sep}{os.environ.get('PATH', '')}"
+
+
+def cleanup_old_logs(max_logs: int = 3) -> None:
+    """Keep only the N most recent log files, delete older ones."""
+    log_pattern = "test-script-*.log"
+    log_files = sorted(glob.glob(log_pattern), key=os.path.getmtime, reverse=True)
+    
+    # Delete all but the most recent max_logs files
+    for old_log in log_files[max_logs:]:
+        try:
+            os.remove(old_log)
+        except OSError as e:
+            print_and_log(f"{YELLOW}Warning: Could not remove {old_log}: {e}{RESET}")
+
+def setup_logging() -> None:
+    """Set up log file with UTF-8 encoding."""
+    global LOG_FILE, LOG_HANDLE
+    
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    LOG_FILE = Path(f"test-script-{timestamp}.log")
+    LOG_HANDLE = open(LOG_FILE, "w", encoding="utf-8")
+    print_and_log(f"Logging to: {LOG_FILE}")
+
+def close_logging() -> None:
+    """Close log file handle."""
+    global LOG_HANDLE
+    if LOG_HANDLE:
+        LOG_HANDLE.close()
+        LOG_HANDLE = None
 
 
 # ============================================================
@@ -326,6 +384,7 @@ Examples:
   python test.py --e2e              # Run E2E tests only
   python test.py --rust --coverage  # Run Rust tests with coverage
   python test.py --all --verbose    # Run all tests with full output
+  python test.py --log              # Run all tests and log to file
 """
     )
     parser.add_argument("-r", "--rust", action="store_true", help="Run Rust tests")
@@ -333,12 +392,20 @@ Examples:
     parser.add_argument("-e", "--e2e", action="store_true", help="Run E2E tests")
     parser.add_argument("-c", "--coverage", action="store_true", help="Generate coverage reports")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show full output")
+    parser.add_argument("-l", "--log", action="store_true", help="Enable logging to file")
     parser.add_argument("-a", "--audit", action="store_true", help="Run cargo audit")
     parser.add_argument("--clippy", action="store_true", help="Run Clippy linter")
     parser.add_argument("--all", action="store_true", help="Run all tests (default)")
     args = parser.parse_args()
     
     VERBOSE = args.verbose
+    LOG_ENABLED = args.log
+    
+    # Set up logging if enabled
+    if LOG_ENABLED:
+        setup_logging()
+        # Clean up old logs (keep only 3)
+        cleanup_old_logs(max_logs=3)
     
     # Determine what to run
     run_all = args.all or not (args.rust or args.gui or args.e2e or args.audit or args.clippy)
@@ -346,6 +413,11 @@ Examples:
     print(f"\n{CYAN}+=========================================+{RESET}")
     print(f"{CYAN}|     Website Searcher Test Suite       |{RESET}")
     print(f"{CYAN}+=========================================+{RESET}\n")
+    
+    # Log the test suite header
+    log_write("\n+=========================================+\n")
+    log_write("|     Website Searcher Test Suite       |\n")
+    log_write("+=========================================+\n\n")
     
     results = {}
     
@@ -395,6 +467,8 @@ Examples:
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Tests interrupted{RESET}")
         return 130
+    finally:
+        close_logging()
 
 
 if __name__ == "__main__":

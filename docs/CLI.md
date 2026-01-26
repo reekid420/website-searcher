@@ -37,6 +37,7 @@ websearcher [OPTIONS] [QUERY]
 | `--limit <N>`            | Maximum results per site                          | 10                         |
 | `--sites <a,b,c>`        | Restrict to specific sites (comma-separated)      | all                        |
 | `--format <json\|table>` | Output format                                     | json                       |
+| `--json`                 | Alias for `--format json`                         | json                       |
 | `--debug`                | Print diagnostics, write HTML samples to `debug/` | off                        |
 | `--no-cf`                | Disable Cloudflare solver                         | CF enabled                 |
 | `--cf_url <URL>`         | Override FlareSolverr endpoint                    | `http://localhost:8191/v1` |
@@ -189,6 +190,40 @@ websearcher "elden ring" --debug
 - Prints verbose diagnostics to stderr
 - Writes HTML samples to `debug/` directory
 - Filenames: `debug/{site}_sample.html`
+
+## Monitoring and Logging
+
+The application includes structured logging and Prometheus metrics:
+
+### Metrics
+
+When running, Prometheus metrics are available on port 9898 (or next available port):
+
+```bash
+curl http://localhost:9898/metrics
+```
+
+Metrics include:
+- Request counts per site
+- Success/failure rates
+- Response times
+- Cache hit/miss ratios
+
+### Logging
+
+Structured logging provides detailed operation information:
+
+```bash
+# JSON output suppresses verbose logging
+websearcher "query" --format json
+
+# Table output includes full logs
+websearcher "query" --format table
+```
+
+### Environment Variables
+
+- `WEBSITE_SEARCHER_NO_METRICS=1` - Disable metrics exporter
 
 ## Site-Specific Notes
 

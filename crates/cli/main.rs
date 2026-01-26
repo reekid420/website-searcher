@@ -137,7 +137,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize monitoring and tracing
-    monitoring::init_monitoring()?;
+    monitoring::init_monitoring_with_json(matches!(cli.format, OutputFormat::Json))?;
 
     // Cache file path - use platform-appropriate cache directory
     let cache_path = dirs::cache_dir()
@@ -335,8 +335,8 @@ async fn main() -> Result<()> {
             match t.parse::<usize>() {
                 Ok(idx1) if (1..=all_sites.len()).contains(&idx1) => {
                     let name = &all_sites_clone[idx1 - 1].name;
-                    if !chosen.iter().any(|c| c.eq_ignore_ascii_case(&name)) {
-                        chosen.push(&name);
+                    if !chosen.iter().any(|c| c.eq_ignore_ascii_case(name)) {
+                        chosen.push(name);
                     }
                     continue;
                 }
@@ -1003,6 +1003,7 @@ fn filter_results_by_query_strict(results: &mut Vec<SearchResult>, query: &str) 
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_gog_games_ajax_json(
     client: &reqwest::Client,
     site: &website_searcher_core::models::SiteConfig,
@@ -1115,6 +1116,7 @@ async fn fetch_gog_games_ajax_json(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_csrin_feed(
     client: &reqwest::Client,
     site: &website_searcher_core::models::SiteConfig,

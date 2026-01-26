@@ -46,6 +46,12 @@ pub struct RateLimiter {
     max_failures: u32,
 }
 
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RateLimiter {
     /// Create a new rate limiter with default settings
     pub fn new() -> Self {
@@ -141,10 +147,19 @@ impl RateLimiter {
 
     /// Record a failed request and apply backoff
     pub fn record_failure(&mut self, site: &str) -> Result<(), RateLimitError> {
+        // Ensure site state exists
+        self.sites.entry(site.to_string()).or_insert_with(|| SiteRateState {
+            last_request: Instant::now(),
+            current_delay: self.base_delay,
+            failure_count: 0,
+            avg_response_time: Duration::from_millis(500),
+            response_samples: Vec::new(),
+        });
+        
         if let Some(state) = self.sites.get_mut(site) {
             state.failure_count += 1;
 
-            if state.failure_count >= self.max_failures {
+            if state.failure_count > self.max_failures {
                 return Err(RateLimitError::TooManyFailures);
             }
 
@@ -247,7 +262,7 @@ mod tests {
             3,
         );
 
-        let site = "test-site";
+        let site = "test-site-failure-backoff";
 
         // Record a failure
         limiter.record_failure(site).unwrap();
@@ -267,7 +282,7 @@ mod tests {
             2, // Max 2 failures
         );
 
-        let site = "test-site";
+        let site = "test-site-max-failures";
 
         // Record failures up to max
         limiter.record_failure(site).unwrap();

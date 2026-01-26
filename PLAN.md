@@ -210,24 +210,94 @@ pub struct AdvancedQuery {
 
 ### Implementation Details
 - Structured logging with `tracing` crate
-- Metrics collection using `metrics` crate
-- Performance profiling endpoints
-- Health check system
+- Metrics collection using `metrics` crate and Prometheus exporter
+- Performance tracking with histograms and counters
+- Port auto-discovery (9898-9907) to avoid conflicts
+- Environment variable to disable metrics in tests
 
 ### Code Changes
 ```rust
 // New file: crates/core/src/monitoring.rs
-pub struct Metrics {
-    search_duration: Histogram,
-    success_rate: Counter,
-    active_requests: Gauge,
+pub struct SearchMetrics {
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    // ... per-site metrics
 }
 ```
 
 ### Implementation
-- Add logging throughout the application
-- Create `/metrics` endpoint for GUI
-- Add health check for Docker
+- Added logging throughout fetcher, cache, and parser modules
+- Created Prometheus metrics endpoint on configurable port
+- Integrated metrics recording in async operations
+- Suppressed verbose logging for JSON output
+
+---
+
+## 12. Smart Caching System (completed)
+
+### Implementation Details
+- TTL-based cache entries with configurable expiration
+- Persistent storage to platform cache directory
+- LRU eviction when size limit exceeded
+- Thread-safe async operations with RwLock
+- JSON serialization for persistence
+
+### Code Changes
+```rust
+// New file: crates/core/src/cache.rs
+pub struct Cache {
+    entries: Vec<CacheEntry>,
+    max_size: usize,
+}
+
+pub struct CacheEntry {
+    query: String,
+    results: Vec<SearchResult>,
+    timestamp: u64,
+    ttl: u64,
+}
+```
+
+### Features
+- `--cache-size` flag to configure cache size (3-20 entries)
+- `--no-cache` flag to bypass cache for fresh results
+- `--clear-cache` command to clear all cached entries
+- Automatic cleanup of expired entries
+- Cache hit/miss metrics
+
+---
+
+## 13. Rate Limiting & Backoff (completed)
+
+### Implementation Details
+- Per-site rate limiting with configurable delays
+- Exponential backoff for failed requests
+- Adaptive delays based on response times
+- Failure count tracking with max failure threshold
+- Jitter addition to prevent thundering herd
+
+### Code Changes
+```rust
+// Enhanced: crates/core/src/rate_limiter.rs
+pub struct RateLimiter {
+    base_delay: Duration,
+    max_delay: Duration,
+    backoff_multiplier: f64,
+    jitter: f64,
+    max_failures: u32,
+    sites: HashMap<String, SiteRateState>,
+}
+```
+
+### Features
+- Configurable per-site rate limits in config files
+- Automatic exponential backoff on failures
+- Circuit breaker pattern after max failures
+- Response time-based adaptive delays
+- Comprehensive metrics for rate limiting
 
 ---
 

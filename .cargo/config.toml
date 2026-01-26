@@ -1,0 +1,2 @@
+[env]
+WEBSITE_SEARCHER_NO_METRICS = { value = "1", force = true }

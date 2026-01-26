@@ -55,6 +55,9 @@ python test.py --gui --coverage
 # With verbose output
 python test.py --verbose
 
+# Enable logging to timestamped file
+python test.py --log
+
 # Run linting and audit
 python test.py --clippy --audit
 ```
@@ -242,10 +245,20 @@ websearcher "test" --cf_url http://localhost:8191/v1
 
 ### Environment Variables
 
-| Variable           | Purpose                                      |
-| ------------------ | -------------------------------------------- |
-| `NO_COLOR=1`       | Disable ANSI colors (for assertion matching) |
-| `RUST_BACKTRACE=1` | Show backtraces on failure                   |
+| Variable                      | Purpose                                      |
+| ------------------------------ | -------------------------------------------- |
+| `NO_COLOR=1`                  | Disable ANSI colors (for assertion matching) |
+| `RUST_BACKTRACE=1`             | Show backtraces on failure                   |
+| `WEBSITE_SEARCHER_NO_METRICS=1`| Disable metrics exporter (auto-set in tests) |
+| `CSRIN_PAGES`                  | Number of csrin pages to fetch (default: 1)  |
+
+### Test Configuration
+
+Tests automatically disable the metrics exporter to avoid port conflicts. This is configured via:
+
+1. `.cargo/config.toml` - Sets `WEBSITE_SEARCHER_NO_METRICS=1` for all cargo commands
+2. Test files use `--no-cache` flag to avoid cache interference
+3. Unique site names in rate limiter tests prevent state leakage
 
 ## Playwright Tests
 
@@ -296,6 +309,9 @@ cargo llvm-cov --workspace --html
 
 # Summary only
 cargo llvm-cov --workspace --summary-only
+
+# Via test.py with logging
+python test.py --rust --coverage --log
 ```
 
 ### Linux Alternative

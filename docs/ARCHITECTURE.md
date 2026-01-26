@@ -7,11 +7,12 @@ Website-Searcher is a cross-platform application for searching multiple game dow
 ```
 website-searcher/
 ├── crates/
-│   ├── core/          # Shared library - scraping, parsing, fetching
+│   ├── core/          # Shared library - scraping, parsing, fetching, caching, monitoring
 │   └── cli/           # CLI application with TUI
 ├── src-tauri/         # Tauri backend (Rust)
 ├── gui/               # React + TypeScript frontend
 ├── scripts/           # Helper scripts (Playwright, aliases)
+├── config/            # External configuration (sites.toml)
 ├── quickstart.py      # Prerequisites installer
 └── compile.py         # Build and packaging script
 ```
@@ -27,16 +28,22 @@ graph TB
     
     subgraph "Core Library"
         Core[website_searcher_core<br/>crates/core]
+        Cache[Cache Module<br/>TTL-based]
+        Monitor[Monitoring Module<br/>Metrics/Logging]
     end
     
     subgraph "External Services"
         Sites[Game Sites<br/>13 supported]
         CF[FlareSolverr<br/>Cloudflare bypass]
         PW[Playwright<br/>cs.rin.ru]
+        Prometheus[Prometheus<br/>Metrics endpoint]
     end
     
     CLI --> Core
     GUI --> Core
+    Core --> Cache
+    Core --> Monitor
+    Monitor --> Prometheus
     Core --> Sites
     Core --> CF
     CLI --> PW
@@ -55,6 +62,9 @@ The `website_searcher_core` crate (`crates/core/src/`) contains:
 | `fetcher.rs` | HTTP fetching with retry/backoff logic |
 | `parser.rs` | HTML parsing and result extraction |
 | `cf.rs` | FlareSolverr integration for Cloudflare bypass |
+| `cache.rs` | TTL-based result caching with persistence |
+| `rate_limiter.rs` | Per-site rate limiting with exponential backoff |
+| `monitoring.rs` | Prometheus metrics and structured logging |
 | `output.rs` | Table/JSON formatting utilities |
 
 ## Data Flow
@@ -64,27 +74,37 @@ sequenceDiagram
     participant User
     participant CLI/GUI
     participant Core
+    participant Cache
+    participant Monitor
     participant Fetcher
     participant Parser
     participant Site
 
     User->>CLI/GUI: Search query
     CLI/GUI->>Core: search(query, sites)
+    Core->>Cache: check_cache(query)
+    Cache-->>Core: cached results or None
     
-    loop For each site (parallel)
-        Core->>Fetcher: fetch_page(url)
-        
-        alt Cloudflare protected
-            Fetcher->>FlareSolverr: solve challenge
-            FlareSolverr-->>Fetcher: HTML
-        else Direct fetch
-            Fetcher->>Site: HTTP GET
-            Site-->>Fetcher: HTML
+    alt Cache miss
+        loop For each site (parallel)
+            Core->>Monitor: start_timer(site)
+            Core->>Fetcher: fetch_page(url)
+            
+            alt Cloudflare protected
+                Fetcher->>FlareSolverr: solve challenge
+                FlareSolverr-->>Fetcher: HTML
+            else Direct fetch
+                Fetcher->>Site: HTTP GET
+                Site-->>Fetcher: HTML
+            end
+            
+            Fetcher-->>Core: HTML response
+            Core->>Monitor: record_request(site, duration, success)
+            Core->>Parser: parse_results(html)
+            Parser-->>Core: Vec<SearchResult>
         end
         
-        Fetcher-->>Core: HTML response
-        Core->>Parser: parse_results(html)
-        Parser-->>Core: Vec<SearchResult>
+        Core->>Cache: store_results(query, results)
     end
     
     Core-->>CLI/GUI: Combined results
@@ -119,6 +139,9 @@ pub struct SiteConfig {
     pub url_attr: &'static str,          // How to get URL (href)
     pub requires_js: bool,               // Needs JavaScript
     pub requires_cloudflare: bool,       // Needs FlareSolverr
+    pub timeout_seconds: u64,            // Request timeout
+    pub retry_attempts: u32,             // Number of retries
+    pub rate_limit_delay_ms: u64,        // Base delay between requests
 }
 ```
 
@@ -137,6 +160,27 @@ The GUI uses Tauri 2.x with a React frontend:
 - Parallel site fetching with `FuturesUnordered`
 - Semaphore limits concurrent requests to 3
 - Each site fetch is independent; failures don't block others
+- Rate limiter enforces per-site delays with exponential backoff
+- Cache operations use async RwLock for concurrent access
+
+## Caching System
+
+The cache module provides:
+- TTL-based entries with configurable expiration
+- Persistent storage to platform cache directory
+- LRU eviction when size limit exceeded
+- Automatic cleanup of expired entries
+- Thread-safe operations with async locks
+
+## Monitoring System
+
+The monitoring module tracks:
+- Request counts per site (success/failure)
+- Response time histograms
+- Cache hit/miss ratios
+- Active request gauges
+- Structured logging with tracing
+- Prometheus metrics on configurable port (9898-9907)
 
 ## Error Handling
 

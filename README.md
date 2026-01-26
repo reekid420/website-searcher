@@ -14,6 +14,9 @@ Cross-platform CLI and GUI application that queries multiple game download sites
 - **Cross-Platform** - Windows, macOS, Linux (x64 & ARM)
 - **GUI & CLI** - Tauri-based desktop app or terminal tool
 - **Playwright Support** - JavaScript rendering for complex sites
+- **Smart Caching** - TTL-based cache with configurable expiration
+- **Rate Limiting** - Exponential backoff and per-site rate controls
+- **Monitoring** - Prometheus metrics and structured logging
 
 ## Quick Start
 
@@ -68,6 +71,8 @@ ws --gui
 | `--format json\|table` | Output format                  |
 | `--debug`              | Write HTML samples to `debug/` |
 | `--no-cf`              | Disable Cloudflare solver      |
+| `--no-cache`           | Skip cache for fresh results    |
+| `--json`               | Alias for `--format json`      |
 
 See [docs/CLI.md](docs/CLI.md) for complete reference.
 
@@ -109,6 +114,7 @@ See [docs/DOCKER.md](docs/DOCKER.md) for advanced usage.
 | [API](docs/API.md)                   | Core library reference      |
 | [TESTING](docs/TESTING.md)           | Test suite documentation    |
 | [PACKAGING](docs/PACKAGING.md)       | Build and packaging         |
+| [MONITORING](docs/MONITORING.md)     | Metrics and logging guide   |
 
 ## Development
 
@@ -120,7 +126,10 @@ cargo fmt --all
 cargo clippy --all-targets
 
 # Test
-cargo test --workspace
+cargo nextest --workspace
+
+# Test with logging
+python test.py --log
 
 # Coverage
 cargo llvm-cov --workspace --html
@@ -133,11 +142,13 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for setup instructions.
 ```
 website-searcher/
 ├── crates/
-│   ├── core/      # Shared library (scraping, parsing)
+│   ├── core/      # Shared library (scraping, parsing, caching, monitoring)
 │   └── cli/       # CLI binary with TUI
 ├── src-tauri/     # Tauri backend
 ├── gui/           # React frontend
-└── scripts/       # Playwright helpers
+├── scripts/       # Playwright helpers
+├── config/        # External configuration (sites.toml)
+└── .cargo/        # Cargo configuration (test environment)
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed design.

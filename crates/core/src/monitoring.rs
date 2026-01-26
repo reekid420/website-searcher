@@ -15,18 +15,56 @@ pub fn get_metrics() -> &'static Arc<SearchMetrics> {
 
 /// Initialize tracing subscriber and metrics exporter
 pub fn init_monitoring() -> anyhow::Result<()> {
-    // Initialize tracing subscriber
-    init_tracing();
+    init_monitoring_with_json(false)
+}
 
-    // Initialize metrics exporter
+/// Initialize monitoring with option to suppress logging for JSON output
+pub fn init_monitoring_with_json(json_output: bool) -> anyhow::Result<()> {
+    // Initialize tracing subscriber
+    if json_output {
+        // For JSON output, use a minimal logger that only writes errors
+        init_tracing_json();
+    } else {
+        init_tracing();
+    }
+
+    // Skip metrics exporter in tests or when disabled
+    if std::env::var("WEBSITE_SEARCHER_NO_METRICS").is_ok() {
+        return Ok(());
+    }
+
+    // Try to initialize metrics exporter on port 9898, fall back to random port if occupied
+    let port = find_available_port(9898).unwrap_or(9899);
+    
     metrics_exporter_prometheus::PrometheusBuilder::new()
-        .with_http_listener(([0, 0, 0, 0], 9898))
+        .with_http_listener(([0, 0, 0, 0], port))
         .install()?;
 
-    info!("Monitoring system initialized");
-    info!("Metrics endpoint available at http://localhost:9898/metrics");
+    if !json_output {
+        info!("Monitoring system initialized");
+        info!("Metrics endpoint available at http://localhost:{}/metrics", port);
+    }
 
     Ok(())
+}
+
+/// Initialize tracing for JSON output (errors only)
+fn init_tracing_json() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from("error"))
+        .with_target(false)
+        .with_ansi(false)
+        .init();
+}
+
+/// Find an available port starting from the given port
+fn find_available_port(start_port: u16) -> Option<u16> {
+    (start_port..(start_port + 10)).find(|&port| port_is_available(port))
+}
+
+/// Check if a port is available
+fn port_is_available(port: u16) -> bool {
+    std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
 }
 
 /// Initialize tracing subscriber with default configuration
@@ -64,6 +102,12 @@ pub struct SiteMetrics {
     pub successes: u64,
     pub failures: u64,
     pub avg_response_time: Duration,
+}
+
+impl Default for SearchMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SearchMetrics {
@@ -235,7 +279,6 @@ macro_rules! record_search_metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::sleep;
 
     #[tokio::test]
     async fn test_metrics_recording() {
@@ -250,10 +293,10 @@ mod tests {
         assert_eq!(site_metrics.failures, 1);
     }
 
-    #[test]
-    fn test_timer() {
+    #[tokio::test]
+    async fn test_timer() {
         let timer = Timer::start("test");
-        sleep(Duration::from_millis(10));
+        tokio::time::sleep(Duration::from_millis(10)).await;
         let duration = timer.finish();
         assert!(duration >= Duration::from_millis(10));
     }

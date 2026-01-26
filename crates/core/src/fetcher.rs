@@ -37,10 +37,9 @@ pub async fn fetch_with_retry(
 
     while attempt < max_attempts {
         // Apply rate limiting if provided
-        if let Some(limiter) = rate_limiter.as_mut() {
-            if let Err(e) = limiter.wait_for_site(site).await {
-                return Err(anyhow::anyhow!("Rate limit error: {}", e));
-            }
+        if let Some(limiter) = rate_limiter.as_mut()
+            && let Err(e) = limiter.wait_for_site(site).await {
+            return Err(anyhow::anyhow!("Rate limit error: {}", e));
         }
 
         let start_time = std::time::Instant::now();
@@ -70,16 +69,14 @@ pub async fn fetch_with_retry(
                         sleep(backoff).await;
                     }
                     StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => {
-                        error!(site = site, status = status.as_u16(), "Access denied");
-                        last_err = Some(anyhow::anyhow!("Access denied: {}", status));
-                        // Don't retry auth errors
-                        break;
+                        warn!(site = site, status = status.as_u16(), "Access denied");
+                        // Return empty string for access denied errors
+                        return Ok(String::new());
                     }
                     StatusCode::NOT_FOUND => {
-                        warn!(site = site, "Resource not found (404)");
-                        last_err = Some(anyhow::anyhow!("Not found: {}", status));
-                        // Don't retry 404s
-                        break;
+                        debug!(site = site, "Resource not found (404)");
+                        // Return empty string for not found errors
+                        return Ok(String::new());
                     }
                     StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT => {
                         warn!(site = site, status = status.as_u16(), "Server error, will retry");
@@ -89,6 +86,11 @@ pub async fn fetch_with_retry(
                         sleep(backoff).await;
                     }
                     _ => {
+                        // Handle redirection codes by returning empty string
+                        if status.is_redirection() {
+                            debug!(site = site, status = status.as_u16(), "Redirection received");
+                            return Ok(String::new());
+                        }
                         warn!(site = site, status = status.as_u16(), "Unexpected status");
                         last_err = Some(anyhow::anyhow!("Unexpected status: {}", status));
                         // Linear backoff for other errors
@@ -132,10 +134,9 @@ pub async fn fetch_with_retry_headers(
 
     while attempt < max_attempts {
         // Apply rate limiting if provided
-        if let Some(limiter) = rate_limiter.as_mut() {
-            if let Err(e) = limiter.wait_for_site(site).await {
-                return Err(anyhow::anyhow!("Rate limit error: {}", e));
-            }
+        if let Some(limiter) = rate_limiter.as_mut()
+            && let Err(e) = limiter.wait_for_site(site).await {
+            return Err(anyhow::anyhow!("Rate limit error: {}", e));
         }
 
         let start_time = std::time::Instant::now();
@@ -165,16 +166,14 @@ pub async fn fetch_with_retry_headers(
                         sleep(backoff).await;
                     }
                     StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => {
-                        error!(site = site, status = status.as_u16(), "Access denied");
-                        last_err = Some(anyhow::anyhow!("Access denied: {}", status));
-                        // Don't retry auth errors
-                        break;
+                        warn!(site = site, status = status.as_u16(), "Access denied");
+                        // Return empty string for access denied errors
+                        return Ok(String::new());
                     }
                     StatusCode::NOT_FOUND => {
-                        warn!(site = site, "Resource not found (404)");
-                        last_err = Some(anyhow::anyhow!("Not found: {}", status));
-                        // Don't retry 404s
-                        break;
+                        debug!(site = site, "Resource not found (404)");
+                        // Return empty string for not found errors
+                        return Ok(String::new());
                     }
                     StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT => {
                         warn!(site = site, status = status.as_u16(), "Server error, will retry");
@@ -184,6 +183,11 @@ pub async fn fetch_with_retry_headers(
                         sleep(backoff).await;
                     }
                     _ => {
+                        // Handle redirection codes by returning empty string
+                        if status.is_redirection() {
+                            debug!(site = site, status = status.as_u16(), "Redirection received");
+                            return Ok(String::new());
+                        }
                         warn!(site = site, status = status.as_u16(), "Unexpected status");
                         last_err = Some(anyhow::anyhow!("Unexpected status: {}", status));
                         // Linear backoff for other errors

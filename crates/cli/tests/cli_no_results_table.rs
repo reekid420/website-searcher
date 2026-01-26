@@ -22,6 +22,7 @@ async fn cli_no_results_prints_table_message() {
         &server.url(),
         "--format",
         "table",
+        "--no-cache",
     ]);
     cmd.env("NO_COLOR", "1");
 
