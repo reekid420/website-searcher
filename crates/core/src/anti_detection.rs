@@ -116,12 +116,12 @@ impl ProxyConfig {
         let url = url.trim();
 
         // Determine proxy type from scheme
-        let (proxy_type, rest) = if url.starts_with("socks5://") {
-            (ProxyType::Socks5, &url[9..])
-        } else if url.starts_with("https://") {
-            (ProxyType::Https, &url[8..])
-        } else if url.starts_with("http://") {
-            (ProxyType::Http, &url[7..])
+        let (proxy_type, rest) = if let Some(rest) = url.strip_prefix("socks5://") {
+            (ProxyType::Socks5, rest)
+        } else if let Some(rest) = url.strip_prefix("https://") {
+            (ProxyType::Https, rest)
+        } else if let Some(rest) = url.strip_prefix("http://") {
+            (ProxyType::Http, rest)
         } else {
             // Default to SOCKS5 if no scheme
             (ProxyType::Socks5, url)

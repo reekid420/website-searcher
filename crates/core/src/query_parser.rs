@@ -68,10 +68,10 @@ impl AdvancedQuery {
 
             // Regex pattern: regex:pattern
             if let Some(pattern) = token.strip_prefix("regex:") {
-                if !pattern.is_empty() {
-                    if let Ok(re) = Regex::new(pattern) {
-                        query.regex_patterns.push(re);
-                    }
+                if !pattern.is_empty()
+                    && let Ok(re) = Regex::new(pattern)
+                {
+                    query.regex_patterns.push(re);
                 }
                 continue;
             }

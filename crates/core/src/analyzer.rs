@@ -95,13 +95,12 @@ pub fn extract_metadata(title: &str) -> ResultMetadata {
     ];
 
     for pattern in size_patterns {
-        if let Ok(re) = regex::Regex::new(&format!("(?i){}", pattern)) {
-            if let Some(cap) = re.captures(title) {
-                if let Some(size) = cap.get(1) {
-                    metadata.file_size = Some(size.as_str().to_uppercase().replace(" ", ""));
-                    break;
-                }
-            }
+        if let Ok(re) = regex::Regex::new(&format!("(?i){}", pattern))
+            && let Some(cap) = re.captures(title)
+            && let Some(size) = cap.get(1)
+        {
+            metadata.file_size = Some(size.as_str().to_uppercase().replace(" ", ""));
+            break;
         }
     }
 
@@ -113,23 +112,21 @@ pub fn extract_metadata(title: &str) -> ResultMetadata {
     ];
 
     for pattern in version_patterns {
-        if let Ok(re) = regex::Regex::new(&format!("(?i){}", pattern)) {
-            if let Some(cap) = re.captures(title) {
-                if let Some(ver) = cap.get(1) {
-                    metadata.version = Some(format!("v{}", ver.as_str()));
-                    break;
-                }
-            }
+        if let Ok(re) = regex::Regex::new(&format!("(?i){}", pattern))
+            && let Some(cap) = re.captures(title)
+            && let Some(ver) = cap.get(1)
+        {
+            metadata.version = Some(format!("v{}", ver.as_str()));
+            break;
         }
     }
 
     // Extract build number (e.g., "Build 12345", "b12345")
-    if let Ok(re) = regex::Regex::new(r"(?i)(?:build\s*|b)(\d{4,})") {
-        if let Some(cap) = re.captures(title) {
-            if let Some(build) = cap.get(1) {
-                metadata.build = Some(build.as_str().to_string());
-            }
-        }
+    if let Ok(re) = regex::Regex::new(r"(?i)(?:build\s*|b)(\d{4,})")
+        && let Some(cap) = re.captures(title)
+        && let Some(build) = cap.get(1)
+    {
+        metadata.build = Some(build.as_str().to_string());
     }
 
     // Extract date (e.g., "2024-01-15", "01/15/2024", "15.01.2024")
@@ -140,13 +137,12 @@ pub fn extract_metadata(title: &str) -> ResultMetadata {
     ];
 
     for pattern in date_patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if let Some(cap) = re.captures(title) {
-                if let Some(date) = cap.get(1) {
-                    metadata.release_date = Some(date.as_str().to_string());
-                    break;
-                }
-            }
+        if let Ok(re) = regex::Regex::new(pattern)
+            && let Some(cap) = re.captures(title)
+            && let Some(date) = cap.get(1)
+        {
+            metadata.release_date = Some(date.as_str().to_string());
+            break;
         }
     }
 
@@ -178,11 +174,12 @@ fn normalize_for_comparison(title: &str) -> String {
 
     // Remove common noise patterns
     let noise_patterns = [
-        r"\s*[\[(][^\])]*(?:gb|mb|tb|gib|mib|tib)[\])]", // Size markers
-        r"\s*[\[(]v?\d+(?:\.\d+)+[\])]",                 // Version markers
-        r"\s*[\[(]build\s*\d+[\])]",                     // Build markers
-        r"(?:repack|rip|proper|update|fix)",             // Release tags
-        r"[-_]+",                                        // Separators
+        r"\s*[\[(][^\])]*(?:gb|mb|tb|gib|mib|tib)[\])]", // Size markers in brackets
+        r"\s*[\[(]v?\d+(?:\.\d+)+[\])]",                 // Version markers in brackets
+        r"\s*v\d+(?:\.\d+)+",        // Standalone version markers (e.g., v1.2.3)
+        r"\s*[\[(]build\s*\d+[\])]", // Build markers
+        r"(?:repack|rip|proper|update|fix)", // Release tags
+        r"[-_]+",                    // Separators
     ];
 
     for pattern in noise_patterns {

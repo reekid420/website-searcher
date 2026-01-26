@@ -9,9 +9,10 @@ Options:
     -r, --rust      Run Rust tests only
     -g, --gui       Run GUI tests only
     -e, --e2e       Run E2E tests only
-    -c, --coverage  Generate coverage reports
-    -v, --verbose   Show full output
-    -l, --log       Enable logging to timestamped file (always shows in terminal too)
+    -c, --clippy    Run Clippy linter only
+    --coverage      Generate coverage reports
+    -v, --verbose   Show full output (also logs everything to file with -l)
+    -l, --log       Enable logging to timestamped file
     -a, --audit     Run cargo audit
     --all           Run all tests (default if no specific option given)
 """
@@ -104,8 +105,11 @@ def run_cmd(cmd, shell: bool = False, check: bool = True,
             cwd: Optional[str] = None, quiet: bool = False) -> Optional[subprocess.CompletedProcess]:
     """
     Run a command with output handling.
+    
+    When VERBOSE: stream output to terminal AND log file
+    When quiet and not VERBOSE: suppress stdout
     """
-    global VERBOSE
+    global VERBOSE, LOG_HANDLE
     
     try:
         if VERBOSE or not quiet:
@@ -128,6 +132,9 @@ def run_cmd(cmd, shell: bool = False, check: bool = True,
                 except UnicodeEncodeError:
                     # Strip non-ASCII for Windows cp1252 compatibility
                     print(line.encode('ascii', 'replace').decode(), end='')
+                # Log to file when verbose (captures all command output)
+                if VERBOSE:
+                    log_write(line)
             
             process.wait()
             
@@ -390,11 +397,11 @@ Examples:
     parser.add_argument("-r", "--rust", action="store_true", help="Run Rust tests")
     parser.add_argument("-g", "--gui", action="store_true", help="Run GUI tests")
     parser.add_argument("-e", "--e2e", action="store_true", help="Run E2E tests")
-    parser.add_argument("-c", "--coverage", action="store_true", help="Generate coverage reports")
+    parser.add_argument("--coverage", action="store_true", help="Generate coverage reports")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show full output")
     parser.add_argument("-l", "--log", action="store_true", help="Enable logging to file")
     parser.add_argument("-a", "--audit", action="store_true", help="Run cargo audit")
-    parser.add_argument("--clippy", action="store_true", help="Run Clippy linter")
+    parser.add_argument("-c", "--clippy", action="store_true", help="Run Clippy linter")
     parser.add_argument("--all", action="store_true", help="Run all tests (default)")
     args = parser.parse_args()
     
@@ -408,7 +415,9 @@ Examples:
         cleanup_old_logs(max_logs=3)
     
     # Determine what to run
-    run_all = args.all or not (args.rust or args.gui or args.e2e or args.audit or args.clippy)
+    # Only run all if --all specified OR no specific test flags given
+    has_specific_test = args.rust or args.gui or args.e2e or args.audit or args.clippy
+    run_all = args.all or not has_specific_test
     
     print(f"\n{CYAN}+=========================================+{RESET}")
     print(f"{CYAN}|     Website Searcher Test Suite       |{RESET}")

@@ -69,9 +69,10 @@ def run_cmd(cmd, shell: bool = False, check: bool = True,
     """
     Run a command with output handling.
     
-    When VERBOSE or LOG_ENABLED: stream output in real-time
+    When VERBOSE: stream output in real-time to terminal AND to log file
+    When LOG_ENABLED (without VERBOSE): stream output but only log step headers
     When quiet and not VERBOSE: suppress stdout
-    Always write to log file if LOG_ENABLED
+    Always write to log file if LOG_ENABLED or VERBOSE
     """
     global VERBOSE, LOG_ENABLED, LOG_HANDLE
     
@@ -96,8 +97,9 @@ def run_cmd(cmd, shell: bool = False, check: bool = True,
             for line in process.stdout:
                 # Always print to terminal when verbose or logging
                 print(line, end='')
-                # Write to log file (strip ANSI codes)
-                log_write(line)
+                # Write to log file when VERBOSE (captures all command output)
+                if VERBOSE:
+                    log_write(line)
             
             process.wait()
             
