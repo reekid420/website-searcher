@@ -6,6 +6,8 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use website_searcher_core::cache::{MIN_CACHE_SIZE, SearchCache};
+use website_searcher_core::models::SiteConfig;
+use website_searcher_core::monitoring;
 use website_searcher_core::rate_limiter::RateLimiter;
 use website_searcher_core::{cf, fetcher, output};
 
@@ -133,6 +135,9 @@ struct Cli {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Initialize monitoring and tracing
+    monitoring::init_monitoring()?;
 
     // Cache file path - use platform-appropriate cache directory
     let cache_path = dirs::cache_dir()
@@ -263,7 +268,7 @@ async fn main() -> Result<()> {
             {
                 Ok(true) => None,
                 Ok(false) => {
-                    let site_names: Vec<&str> = all_sites.iter().map(|s| s.name).collect();
+                    let site_names: Vec<&str> = all_sites.iter().map(|s| s.name.as_str()).collect();
                     // Multi-select with all preselected so you can quickly uncheck a few
                     match inquire::MultiSelect::new(
                         "Select sites (Space toggles, Enter confirms):",
@@ -320,26 +325,30 @@ async fn main() -> Result<()> {
             .collect();
         all_sites
             .into_iter()
-            .filter(|s| wanted.iter().any(|w| w.eq_ignore_ascii_case(s.name)))
+            .filter(|s| wanted.iter().any(|w| w.eq_ignore_ascii_case(&s.name)))
             .collect()
     } else if let Some(tokens) = interactive_selection {
         // Map tokens to unique site names by name or 1-based index
         let mut chosen: Vec<&str> = Vec::new();
+        let all_sites_clone = all_sites.clone(); // Clone to avoid borrow issues
         for t in tokens {
             match t.parse::<usize>() {
                 Ok(idx1) if (1..=all_sites.len()).contains(&idx1) => {
-                    let name = all_sites[idx1 - 1].name;
-                    if !chosen.iter().any(|c| c.eq_ignore_ascii_case(name)) {
-                        chosen.push(name);
+                    let name = &all_sites_clone[idx1 - 1].name;
+                    if !chosen.iter().any(|c| c.eq_ignore_ascii_case(&name)) {
+                        chosen.push(&name);
                     }
                     continue;
                 }
                 _ => {}
             }
             // match by name
-            if let Some(s) = all_sites.iter().find(|s| s.name.eq_ignore_ascii_case(&t)) {
-                if !chosen.iter().any(|c| c.eq_ignore_ascii_case(s.name)) {
-                    chosen.push(s.name);
+            if let Some(s) = all_sites_clone
+                .iter()
+                .find(|s| s.name.eq_ignore_ascii_case(&t))
+            {
+                if !chosen.iter().any(|c| c.eq_ignore_ascii_case(&s.name)) {
+                    chosen.push(&s.name);
                 }
             } else {
                 eprintln!("[info] ignoring unknown site token: {}", t);
@@ -349,10 +358,13 @@ async fn main() -> Result<()> {
             eprintln!("[info] no valid sites selected; using ALL");
             all_sites
         } else {
-            all_sites
+            // Collect the chosen site names as strings to avoid borrow issues
+            let chosen_names: Vec<String> = chosen.iter().map(|&s| s.to_string()).collect();
+            let filtered: Vec<SiteConfig> = all_sites_clone
                 .into_iter()
-                .filter(|s| chosen.iter().any(|c| c.eq_ignore_ascii_case(s.name)))
-                .collect()
+                .filter(|s| chosen_names.iter().any(|c| c.eq_ignore_ascii_case(&s.name)))
+                .collect();
+            filtered
         }
     } else {
         all_sites
@@ -395,7 +407,11 @@ async fn main() -> Result<()> {
         tasks.push(tokio::spawn(async move {
             let _permit = permit; // hold until task end
             let base_url = match site.search_kind {
-                SearchKind::ListingPage => site.listing_path.unwrap_or(site.base_url).to_string(),
+                SearchKind::ListingPage => site
+                    .listing_path
+                    .clone()
+                    .unwrap_or(site.base_url.clone())
+                    .to_string(),
                 SearchKind::PhpBBSearch => build_search_url(&site, &query), // Uses search.php URL
                 _ => build_search_url(&site, &query),
             };
@@ -470,12 +486,17 @@ async fn main() -> Result<()> {
                                 &url,
                                 cookie_headers.clone(),
                                 rate_limiter_ref,
-                                Some(&site.name),
+                                Some(site.name.as_str()),
                             )
                             .await
                         } else {
-                            fetch_with_retry(&client, &url, rate_limiter_ref, Some(&site.name))
-                                .await
+                            fetch_with_retry(
+                                &client,
+                                &url,
+                                rate_limiter_ref,
+                                Some(site.name.as_str()),
+                            )
+                            .await
                         })
                         .unwrap_or_default()
                     };
@@ -669,7 +690,7 @@ async fn main() -> Result<()> {
             }
             // Normalize titles for nicer output
             for r in &mut results {
-                r.title = normalize_title(site.name, &r.title);
+                r.title = normalize_title(site.name.as_str(), &r.title);
             }
             if !results.is_empty() {
                 results.truncate(cli.limit);
@@ -1192,7 +1213,7 @@ async fn fetch_csrin_feed(
                     format!("https://cs.rin.ru/forum/{}", href.trim_start_matches('/'))
                 };
                 results.push(SearchResult {
-                    site: site.name.to_string(),
+                    site: site.name.clone(),
                     title: title.to_string(),
                     url,
                 });

@@ -194,7 +194,7 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
             .collect();
         all_sites
             .into_iter()
-            .filter(|s| wanted.iter().any(|w| w.eq_ignore_ascii_case(s.name)))
+            .filter(|s| wanted.iter().any(|w| w.eq_ignore_ascii_case(&s.name)))
             .collect()
     } else {
         all_sites
@@ -240,9 +240,11 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
             let base_url = match site.search_kind {
-                models::SearchKind::ListingPage => {
-                    site.listing_path.unwrap_or(site.base_url).to_string()
-                }
+                models::SearchKind::ListingPage => site
+                    .listing_path
+                    .clone()
+                    .unwrap_or(site.base_url.clone())
+                    .to_string(),
                 _ => query::build_search_url(&site, &query),
             };
             let page_urls: Vec<String> = if site.name.eq_ignore_ascii_case("csrin") {
@@ -426,10 +428,11 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
     combined.dedup_by(|a, b| a.site == b.site && a.url == b.url);
 
     // Apply overall cutoff if specified (0 means no cutoff)
-    if let Some(cutoff) = args.cutoff {
-        if cutoff > 0 && combined.len() > cutoff {
-            combined.truncate(cutoff);
-        }
+    if let Some(cutoff) = args.cutoff
+        && cutoff > 0
+        && combined.len() > cutoff
+    {
+        combined.truncate(cutoff);
     }
 
     Ok(combined)

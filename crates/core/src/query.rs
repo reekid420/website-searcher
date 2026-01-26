@@ -7,7 +7,7 @@ pub fn normalize_query(input: &str) -> String {
 pub fn build_search_url(site: &SiteConfig, query: &str) -> String {
     match site.search_kind {
         SearchKind::QueryParam => {
-            let param = site.query_param.unwrap_or("s");
+            let param = site.query_param.as_deref().unwrap_or("s");
             let qs = serde_urlencoded::to_string([(param, query)])
                 .unwrap_or_else(|_| format!("{}={}", param, query.replace(' ', "+")));
             format!("{}?{}", site.base_url, qs)
@@ -49,16 +49,19 @@ mod tests {
     #[test]
     fn build_queryparam_s() {
         let cfg = SiteConfig {
-            name: "x",
-            base_url: "https://example.com/",
+            name: "x".to_string(),
+            base_url: "https://example.com/".to_string(),
             search_kind: SearchKind::QueryParam,
-            query_param: Some("s"),
+            query_param: Some("s".to_string()),
             listing_path: None,
-            result_selector: "a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let url = build_search_url(&cfg, &normalize_query("elden ring"));
         assert!(url.starts_with("https://example.com/?s="));
@@ -68,16 +71,19 @@ mod tests {
     #[test]
     fn build_pathencoded_spaces() {
         let cfg = SiteConfig {
-            name: "x",
-            base_url: "https://ankergames.net/search/",
+            name: "x".to_string(),
+            base_url: "https://ankergames.net/search/".to_string(),
             search_kind: SearchKind::PathEncoded,
             query_param: None,
             listing_path: None,
-            result_selector: "a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let url = build_search_url(&cfg, &normalize_query("elden ring"));
         assert_eq!(url, "https://ankergames.net/search/elden%20ring");
@@ -86,16 +92,19 @@ mod tests {
     #[test]
     fn build_frontpage_returns_base() {
         let cfg = SiteConfig {
-            name: "front",
-            base_url: "https://front.example/",
+            name: "front".to_string(),
+            base_url: "https://front.example/".to_string(),
             search_kind: SearchKind::FrontPage,
             query_param: None,
             listing_path: None,
-            result_selector: "a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let url = build_search_url(&cfg, &normalize_query("anything"));
         assert_eq!(url, "https://front.example/");
@@ -104,16 +113,19 @@ mod tests {
     #[test]
     fn build_listingpage_returns_base() {
         let cfg = SiteConfig {
-            name: "list",
-            base_url: "https://list.example/",
+            name: "list".to_string(),
+            base_url: "https://list.example/".to_string(),
             search_kind: SearchKind::ListingPage,
             query_param: None,
             listing_path: None,
-            result_selector: "a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let url = build_search_url(&cfg, &normalize_query("anything"));
         assert_eq!(url, "https://list.example/");
@@ -122,16 +134,19 @@ mod tests {
     #[test]
     fn build_phpbbsearch_creates_forum_search_url() {
         let cfg = SiteConfig {
-            name: "csrin",
-            base_url: "https://cs.rin.ru/forum/",
+            name: "csrin".to_string(),
+            base_url: "https://cs.rin.ru/forum/".to_string(),
             search_kind: SearchKind::PhpBBSearch,
-            query_param: Some("keywords"),
-            listing_path: Some("https://cs.rin.ru/forum/viewforum.php?f=10"),
-            result_selector: "a.topictitle",
-            title_attr: "text",
-            url_attr: "href",
+            query_param: Some("keywords".to_string()),
+            listing_path: Some("https://cs.rin.ru/forum/viewforum.php?f=10".to_string()),
+            result_selector: "a.topictitle".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let url = build_search_url(&cfg, &normalize_query("elden ring"));
         assert!(url.starts_with("https://cs.rin.ru/forum/search.php?"));

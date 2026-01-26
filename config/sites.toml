@@ -1,0 +1,192 @@
+# Website Searcher Site Configuration
+# This file defines all supported search sites and their configurations
+
+[global]
+# Default timeout for all sites (seconds)
+default_timeout_seconds = 30
+# Default retry attempts for all sites
+default_retry_attempts = 3
+# Default rate limit delay for all sites (milliseconds)
+default_rate_limit_delay_ms = 1000
+
+[sites.steamgg]
+name = "steamgg"
+base_url = "https://steamgg.net/"
+search_kind = "QueryParam"
+query_param = "s"
+result_selector = "h2.entry-title a, h3.entry-title a, .post-title a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.gog-games]
+name = "gog-games"
+base_url = "https://gog-games.to/"
+search_kind = "QueryParam"
+query_param = "search"
+result_selector = "a.card, .games-list a, article a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.atopgames]
+name = "atopgames"
+base_url = "https://atopgames.com/"
+search_kind = "QueryParam"
+query_param = "s"
+result_selector = "h2.entry-title a, h3.entry-title a, .post-box-title a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.elamigos]
+name = "elamigos"
+base_url = "https://elamigos.site/"
+search_kind = "FrontPage"
+result_selector = "h2.entry-title a, .card-title a, .entry-title a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.fitgirl]
+name = "fitgirl"
+base_url = "https://fitgirl-repacks.site/"
+search_kind = "QueryParam"
+query_param = "s"
+result_selector = "h2.entry-title a, h1.post-title a, .post-title a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = true
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.dodi]
+name = "dodi"
+base_url = "https://dodi-repacks.download/"
+search_kind = "QueryParam"
+query_param = "s"
+result_selector = "h2.entry-title a, .entry-title a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = true
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.skidrowrepacks]
+name = "skidrowrepacks"
+base_url = "https://skidrowrepacks.com/"
+search_kind = "QueryParam"
+query_param = "s"
+result_selector = "h2.entry-title a, h1.entry-title a, .entry-title a, .entry-title > a, article h2 a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.steamrip]
+name = "steamrip"
+base_url = "https://steamrip.com/"
+search_kind = "QueryParam"
+query_param = "s"
+result_selector = "h2.entry-title a, h3.entry-title a, .post-title a, article h2 a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.reloadedsteam]
+name = "reloadedsteam"
+base_url = "https://reloadedsteam.com/"
+search_kind = "QueryParam"
+query_param = "s"
+result_selector = "h2.entry-title a, .post-title a, article h2 a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.ankergames]
+name = "ankergames"
+base_url = "https://ankergames.net/search/"
+search_kind = "PathEncoded"
+listing_path = "https://ankergames.net/games-list"
+result_selector = "div a[href^='/game/'], a.game-card, h2 a, h3 a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.csrin]
+name = "csrin"
+base_url = "https://cs.rin.ru/forum/"
+search_kind = "PhpBBSearch"
+query_param = "keywords"
+listing_path = "https://cs.rin.ru/forum/viewforum.php?f=10"
+result_selector = "a.topictitle, a[href^='viewtopic.php']"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.nswpedia]
+name = "nswpedia"
+base_url = "https://nswpedia.com/"
+search_kind = "QueryParam"
+query_param = "s"
+result_selector = "h2 a, article h2 a, .post-title a"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000
+
+[sites.f95zone]
+name = "f95zone"
+base_url = "https://f95zone.to/"
+search_kind = "ListingPage"
+listing_path = "https://f95zone.to/forums/games.2/"
+result_selector = "a[href*='/threads/']"
+title_attr = "text"
+url_attr = "href"
+requires_js = false
+requires_cloudflare = false
+timeout_seconds = 30
+retry_attempts = 3
+rate_limit_delay_ms = 1000

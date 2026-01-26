@@ -1,9 +1,11 @@
 use std::time::Duration;
 
 use crate::rate_limiter::RateLimiter;
+use crate::monitoring::get_metrics;
 use anyhow::{Context, Result};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use tokio::time::sleep;
+use tracing::{debug, warn, info, error, instrument};
 
 pub fn build_http_client() -> Client {
     Client::builder()
@@ -19,6 +21,7 @@ pub fn build_http_client() -> Client {
         .expect("failed to build reqwest client")
 }
 
+#[instrument(skip(client, rate_limiter))]
 pub async fn fetch_with_retry(
     client: &Client,
     url: &str,
@@ -28,6 +31,8 @@ pub async fn fetch_with_retry(
     let site = site_name.unwrap_or("unknown");
     let mut attempt: u32 = 0;
     let max_attempts: u32 = 3;
+
+    info!(site = site, url = url, "Starting fetch with retry");
     let mut last_err: Option<anyhow::Error> = None;
 
     while attempt < max_attempts {
@@ -39,43 +44,64 @@ pub async fn fetch_with_retry(
         }
 
         let start_time = std::time::Instant::now();
+        info!(site = site, attempt = attempt + 1, "Sending HTTP request");
         let resp = client.get(url).send().await;
         let response_time = start_time.elapsed();
+        
+        // Record metrics
+        get_metrics().record_request(site, response_time, resp.is_ok()).await;
 
         match resp {
             Ok(r) => {
-                if r.status() == StatusCode::OK {
-                    let text = r.text().await.context("read body text")?;
-
-                    // Record success with response time
-                    if let Some(limiter) = rate_limiter.as_mut() {
-                        limiter.record_success(site, response_time);
+                let status = r.status();
+                info!(site = site, status = status.as_u16(), response_time_ms = response_time.as_millis(), "Received response");
+                
+                match status {
+                    StatusCode::OK => {
+                        let body = r.text().await.context("Failed to read response body")?;
+                        debug!(site = site, body_length = body.len(), "Successfully fetched body");
+                        return Ok(body);
                     }
-
-                    return Ok(text);
-                } else if r.status().is_redirection() || r.status() == StatusCode::FORBIDDEN {
-                    // Likely protected by anti-bot; return empty rather than hard fail
-                    return Ok(String::new());
-                } else {
-                    last_err = Some(anyhow::anyhow!("HTTP status {} for {}", r.status(), url));
-
-                    // Record failure
-                    if let Some(limiter) = rate_limiter.as_mut() {
-                        if let Err(e) = limiter.record_failure(site) {
-                            return Err(anyhow::anyhow!("Rate limit error: {}", e));
-                        }
+                    StatusCode::TOO_MANY_REQUESTS => {
+                        warn!(site = site, "Rate limited (429), backing off");
+                        last_err = Some(anyhow::anyhow!("Rate limited: {}", status));
+                        // Exponential backoff for rate limiting
+                        let backoff = Duration::from_millis(1000 * (2_u64.pow(attempt)));
+                        sleep(backoff).await;
+                    }
+                    StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => {
+                        error!(site = site, status = status.as_u16(), "Access denied");
+                        last_err = Some(anyhow::anyhow!("Access denied: {}", status));
+                        // Don't retry auth errors
+                        break;
+                    }
+                    StatusCode::NOT_FOUND => {
+                        warn!(site = site, "Resource not found (404)");
+                        last_err = Some(anyhow::anyhow!("Not found: {}", status));
+                        // Don't retry 404s
+                        break;
+                    }
+                    StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT => {
+                        warn!(site = site, status = status.as_u16(), "Server error, will retry");
+                        last_err = Some(anyhow::anyhow!("Server error: {}", status));
+                        // Exponential backoff for server errors
+                        let backoff = Duration::from_millis(500 * (2_u64.pow(attempt)));
+                        sleep(backoff).await;
+                    }
+                    _ => {
+                        warn!(site = site, status = status.as_u16(), "Unexpected status");
+                        last_err = Some(anyhow::anyhow!("Unexpected status: {}", status));
+                        // Linear backoff for other errors
+                        sleep(Duration::from_millis(500)).await;
                     }
                 }
             }
             Err(e) => {
-                last_err = Some(e.into());
-
-                // Record failure
-                if let Some(limiter) = rate_limiter.as_mut() {
-                    if let Err(e) = limiter.record_failure(site) {
-                        return Err(anyhow::anyhow!("Rate limit error: {}", e));
-                    }
-                }
+                error!(site = site, error = %e, "HTTP request failed");
+                last_err = Some(anyhow::anyhow!("Request failed: {}", e));
+                // Exponential backoff for network errors
+                let backoff = Duration::from_millis(200 * (2_u64.pow(attempt)));
+                sleep(backoff).await;
             }
         }
 
@@ -122,37 +148,55 @@ pub async fn fetch_with_retry_headers(
 
         match resp {
             Ok(r) => {
-                if r.status() == StatusCode::OK {
-                    let text = r.text().await.context("read body text")?;
-
-                    // Record success with response time
-                    if let Some(limiter) = rate_limiter.as_mut() {
-                        limiter.record_success(site, response_time);
+                let status = r.status();
+                info!(site = site, status = status.as_u16(), response_time_ms = response_time.as_millis(), "Received response");
+                
+                match status {
+                    StatusCode::OK => {
+                        let body = r.text().await.context("Failed to read response body")?;
+                        debug!(site = site, body_length = body.len(), "Successfully fetched body");
+                        return Ok(body);
                     }
-
-                    return Ok(text);
-                } else if r.status().is_redirection() || r.status() == StatusCode::FORBIDDEN {
-                    return Ok(String::new());
-                } else {
-                    last_err = Some(anyhow::anyhow!("HTTP status {} for {}", r.status(), url));
-
-                    // Record failure
-                    if let Some(limiter) = rate_limiter.as_mut() {
-                        if let Err(e) = limiter.record_failure(site) {
-                            return Err(anyhow::anyhow!("Rate limit error: {}", e));
-                        }
+                    StatusCode::TOO_MANY_REQUESTS => {
+                        warn!(site = site, "Rate limited (429), backing off");
+                        last_err = Some(anyhow::anyhow!("Rate limited: {}", status));
+                        // Exponential backoff for rate limiting
+                        let backoff = Duration::from_millis(1000 * (2_u64.pow(attempt)));
+                        sleep(backoff).await;
+                    }
+                    StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => {
+                        error!(site = site, status = status.as_u16(), "Access denied");
+                        last_err = Some(anyhow::anyhow!("Access denied: {}", status));
+                        // Don't retry auth errors
+                        break;
+                    }
+                    StatusCode::NOT_FOUND => {
+                        warn!(site = site, "Resource not found (404)");
+                        last_err = Some(anyhow::anyhow!("Not found: {}", status));
+                        // Don't retry 404s
+                        break;
+                    }
+                    StatusCode::SERVICE_UNAVAILABLE | StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT => {
+                        warn!(site = site, status = status.as_u16(), "Server error, will retry");
+                        last_err = Some(anyhow::anyhow!("Server error: {}", status));
+                        // Exponential backoff for server errors
+                        let backoff = Duration::from_millis(500 * (2_u64.pow(attempt)));
+                        sleep(backoff).await;
+                    }
+                    _ => {
+                        warn!(site = site, status = status.as_u16(), "Unexpected status");
+                        last_err = Some(anyhow::anyhow!("Unexpected status: {}", status));
+                        // Linear backoff for other errors
+                        sleep(Duration::from_millis(500)).await;
                     }
                 }
             }
             Err(e) => {
-                last_err = Some(e.into());
-
-                // Record failure
-                if let Some(limiter) = rate_limiter.as_mut() {
-                    if let Err(e) = limiter.record_failure(site) {
-                        return Err(anyhow::anyhow!("Rate limit error: {}", e));
-                    }
-                }
+                error!(site = site, error = %e, "HTTP request failed");
+                last_err = Some(anyhow::anyhow!("Request failed: {}", e));
+                // Exponential backoff for network errors
+                let backoff = Duration::from_millis(200 * (2_u64.pow(attempt)));
+                sleep(backoff).await;
             }
         }
 

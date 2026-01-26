@@ -1,7 +1,9 @@
 use crate::models::SearchResult;
+use crate::monitoring::get_metrics;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tracing::{debug, info, warn, instrument};
 
 /// Minimum cache size (default)
 pub const MIN_CACHE_SIZE: usize = 3;
@@ -38,7 +40,18 @@ impl CacheEntry {
             .unwrap_or(0);
 
         // Check if the entry is older than its TTL
-        now.saturating_sub(self.timestamp) > self.ttl
+        let expired = now.saturating_sub(self.timestamp) > self.ttl;
+        
+        if expired {
+            debug!(
+                query = %self.query,
+                age_seconds = now.saturating_sub(self.timestamp),
+                ttl_seconds = self.ttl,
+                "Cache entry expired"
+            );
+        }
+        
+        expired
     }
 
     /// Get the age of this entry (seconds since creation)
@@ -111,11 +124,27 @@ impl SearchCache {
 
     /// Get cached results for a query (case-insensitive match)
     /// Returns None if entry is expired
+    #[instrument(skip(self), fields(query = %query))]
     pub fn get(&self, query: &str) -> Option<&CacheEntry> {
         let query_lower = query.to_lowercase();
-        self.entries
+        
+        if let Some(entry) = self.entries
             .iter()
             .find(|e| e.query.to_lowercase() == query_lower && !e.is_expired())
+        {
+            debug!(
+                query = %query,
+                result_count = entry.results.len(),
+                age_seconds = entry.age(),
+                "Cache hit"
+            );
+            get_metrics().record_cache_hit();
+            Some(entry)
+        } else {
+            debug!(query = %query, "Cache miss");
+            get_metrics().record_cache_miss();
+            None
+        }
     }
 
     /// Add a search to the cache
@@ -126,11 +155,19 @@ impl SearchCache {
 
     /// Add a search to the cache with custom TTL
     /// If the query already exists, it's updated and moved to the end (most recent)
+    #[instrument(skip(self, results), fields(query = %query, result_count = results.len()))]
     pub fn add_with_ttl(&mut self, query: String, results: Vec<SearchResult>, ttl: Duration) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+
+        info!(
+            query = %query,
+            result_count = results.len(),
+            ttl_seconds = ttl.as_secs(),
+            "Adding entry to cache"
+        );
 
         // Remove existing entry for this query (case-insensitive)
         let query_lower = query.to_lowercase();

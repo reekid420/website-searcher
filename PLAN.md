@@ -42,7 +42,7 @@ pub struct RateLimiter {
 
 ---
 
-## 2. Cache TTL & Expiration (12 hours)
+## 2. Cache TTL & Expiration (12 hours) (completed)
 
 ### Implementation Details
 - Add `timestamp` and `ttl` fields to `CacheEntry`
@@ -93,7 +93,7 @@ pub struct AntiDetectionConfig {
 
 ---
 
-## 4. External Configuration
+## 4. External Configuration (completed)
 
 ### Implementation Details
 - Move site configs to `config/sites.toml`
@@ -206,7 +206,7 @@ pub struct AdvancedQuery {
 
 ---
 
-## 11. Monitoring & Observability
+## 11. Monitoring & Observability (completed)
 
 ### Implementation Details
 - Structured logging with `tracing` crate
@@ -286,7 +286,7 @@ pub struct ContentAnalyzer {
 
 ## Implementation Timeline
 
-### Phase 1 (Week 1-2): Core Infrastructure
+### Phase 1 (Week 1-2): Core Infrastructure (completed)
 1. Rate limiting implementation
 2. Cache TTL system
 3. External configuration system

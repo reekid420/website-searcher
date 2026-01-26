@@ -67,7 +67,7 @@ pub fn parse_results(site: &SiteConfig, html: &str, query: &str) -> Vec<SearchRe
     let document = Html::parse_document(html);
 
     // Primary: use provided selector
-    if let Ok(sel) = Selector::parse(site.result_selector) {
+    if let Ok(sel) = Selector::parse(&site.result_selector) {
         let mut primary: Vec<SearchResult> = Vec::new();
         for el in document.select(&sel) {
             let mut title = el.text().collect::<String>().trim().to_string();
@@ -534,33 +534,43 @@ mod tests {
 
     fn cfg() -> SiteConfig {
         SiteConfig {
-            name: "example",
-            base_url: "https://example.com/",
+            name: "example".to_string(),
+            base_url: "https://example.com/".to_string(),
             search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("s"),
+            query_param: Some("s".to_string()),
             listing_path: None,
-            result_selector: "h2.entry-title a", // won't match our fixture; triggers fallback
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "h2.entry-title a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
+        }
+    }
+
+    fn cfg_with_selector(selector: &str) -> SiteConfig {
+        SiteConfig {
+            name: "example".to_string(),
+            base_url: "https://example.com/".to_string(),
+            search_kind: crate::models::SearchKind::QueryParam,
+            query_param: Some("s".to_string()),
+            listing_path: None,
+            result_selector: selector.to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
+            requires_js: false,
+            requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         }
     }
 
     #[test]
     fn primary_selector_is_filtered_by_query() {
-        let cfg = SiteConfig {
-            name: "example",
-            base_url: "https://example.com/",
-            search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("s"),
-            listing_path: None,
-            result_selector: "a", // will match primary path
-            title_attr: "text",
-            url_attr: "href",
-            requires_js: false,
-            requires_cloudflare: false,
-        };
+        let cfg = cfg_with_selector("a");
         let html = r#"<html><body>
             <a href="/one">Something else</a>
             <a href="/cyberpunk-2077">Cyberpunk 2077</a>
@@ -573,18 +583,7 @@ mod tests {
 
     #[test]
     fn primary_relative_href_becomes_absolute() {
-        let cfg = SiteConfig {
-            name: "example",
-            base_url: "https://example.com/",
-            search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("s"),
-            listing_path: None,
-            result_selector: "a.topictitle", // simulate csrin selector
-            title_attr: "text",
-            url_attr: "href",
-            requires_js: false,
-            requires_cloudflare: false,
-        };
+        let cfg = cfg_with_selector("a.topictitle"); // simulate csrin selector
         let html = r#"<html><body>
             <a class="topictitle" href="viewtopic.php?t=12345">Elden Ring</a>
         </body></html>"#;
@@ -637,7 +636,7 @@ mod tests {
     #[test]
     fn fitgirl_filters_and_normalizes() {
         let mut cfg = cfg();
-        cfg.name = "fitgirl";
+        cfg.name = "fitgirl".to_string();
         let html = r#"<html><body>
             <a href="/page/2">Elden Ring Page</a>
             <a href="/post/1">12345</a>
@@ -655,16 +654,19 @@ mod tests {
     #[test]
     fn parse_elamigos_headings_extract_title_and_absolute_url() {
         let cfg = SiteConfig {
-            name: "elamigos",
-            base_url: "https://elamigos.site/",
+            name: "elamigos".to_string(),
+            base_url: "https://elamigos.site/".to_string(),
             search_kind: crate::models::SearchKind::FrontPage,
             query_param: None,
             listing_path: None,
-            result_selector: "ignored",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "ignored".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <h3><a href="/post/elden-ring">ELDEN RING DOWNLOAD</a></h3>
@@ -679,16 +681,19 @@ mod tests {
     #[test]
     fn parse_f95zone_extracts_thread_links() {
         let cfg = SiteConfig {
-            name: "f95zone",
-            base_url: "https://f95zone.to",
+            name: "f95zone".to_string(),
+            base_url: "https://f95zone.to".to_string(),
             search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("q"),
+            query_param: Some("q".to_string()),
             listing_path: None,
-            result_selector: "a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <a href="/threads/elden-ring-nightreign.12345/">Elden Ring Nightreign [v1.0] [FromSoft]</a>
@@ -704,16 +709,19 @@ mod tests {
     #[test]
     fn parse_f95zone_deduplicates_urls() {
         let cfg = SiteConfig {
-            name: "f95zone",
-            base_url: "https://f95zone.to",
+            name: "f95zone".to_string(),
+            base_url: "https://f95zone.to".to_string(),
             search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("q"),
+            query_param: Some("q".to_string()),
             listing_path: None,
-            result_selector: "a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <a href="/threads/elden-ring.12345/">Elden Ring</a>
@@ -726,16 +734,19 @@ mod tests {
     #[test]
     fn parse_nswpedia_extracts_game_links() {
         let cfg = SiteConfig {
-            name: "nswpedia",
-            base_url: "https://nswpedia.com",
+            name: "nswpedia".to_string(),
+            base_url: "https://nswpedia.com".to_string(),
             search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("s"),
+            query_param: Some("s".to_string()),
             listing_path: None,
-            result_selector: "h2 a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "h2 a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <h2><a href="https://nswpedia.com/zelda-tears-kingdom/">Zelda Tears of the Kingdom</a></h2>
@@ -751,16 +762,19 @@ mod tests {
     #[test]
     fn parse_nswpedia_skips_nav_elements() {
         let cfg = SiteConfig {
-            name: "nswpedia",
-            base_url: "https://nswpedia.com",
+            name: "nswpedia".to_string(),
+            base_url: "https://nswpedia.com".to_string(),
             search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("s"),
+            query_param: Some("s".to_string()),
             listing_path: None,
-            result_selector: "h2 a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "h2 a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <h2><a href="https://nswpedia.com/about">About</a></h2>
@@ -773,16 +787,19 @@ mod tests {
     #[test]
     fn csrin_topictitle_parses_relative_url_with_query() {
         let cfg = SiteConfig {
-            name: "csrin",
-            base_url: "https://cs.rin.ru/forum",
+            name: "csrin".to_string(),
+            base_url: "https://cs.rin.ru/forum".to_string(),
             search_kind: crate::models::SearchKind::PhpBBSearch,
-            query_param: Some("keywords"),
+            query_param: Some("keywords".to_string()),
             listing_path: None,
-            result_selector: "a.topictitle",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a.topictitle".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         // Simulate search.php results page
         let html = r#"<html><body>search.php
@@ -814,7 +831,7 @@ mod tests {
     #[test]
     fn steamrip_filter_drops_nav_links() {
         let mut cfg = cfg();
-        cfg.name = "steamrip";
+        cfg.name = "steamrip".to_string();
         let html = r#"<html><body>
             <a href="/page/2">Next</a>
             <a href="/game?s=test">Previous</a>
@@ -828,7 +845,7 @@ mod tests {
     #[test]
     fn steamrip_filter_drops_numeric_titles() {
         let mut cfg = cfg();
-        cfg.name = "steamrip";
+        cfg.name = "steamrip".to_string();
         let html = r#"<html><body>
             <a href="/elden-ring">12345</a>
             <a href="/elden-ring-deluxe">Elden Ring Deluxe</a>
@@ -855,7 +872,7 @@ mod tests {
     #[test]
     fn gog_games_filtering_requires_game_path() {
         let mut cfg = cfg();
-        cfg.name = "gog-games";
+        cfg.name = "gog-games".to_string();
         let html = r#"<html><body>
             <a href="/game/elden-ring">Elden Ring</a>
             <a href="/search?q=elden">Search Results</a>
@@ -868,7 +885,7 @@ mod tests {
     #[test]
     fn fitgirl_filters_category_and_tag_urls() {
         let mut cfg = cfg();
-        cfg.name = "fitgirl";
+        cfg.name = "fitgirl".to_string();
         let html = r#"<html><body>
             <a href="/category/games">Elden Ring Category</a>
             <a href="/tag/rpg">Elden Ring RPG Tag</a>
@@ -882,7 +899,7 @@ mod tests {
     #[test]
     fn fitgirl_filters_inquiry_pages() {
         let mut cfg = cfg();
-        cfg.name = "fitgirl";
+        cfg.name = "fitgirl".to_string();
         let html = r#"<html><body>
             <a href="/inquiry/elden-ring">Elden Ring Inquiry</a>
             <a href="/inquery/elden">Elden Inquery</a>
@@ -896,16 +913,19 @@ mod tests {
     #[test]
     fn elamigos_empty_query_returns_empty() {
         let cfg = SiteConfig {
-            name: "elamigos",
-            base_url: "https://elamigos.site/",
+            name: "elamigos".to_string(),
+            base_url: "https://elamigos.site/".to_string(),
             search_kind: crate::models::SearchKind::FrontPage,
             query_param: None,
             listing_path: None,
-            result_selector: "h3 a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "h3 a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <h3><a href="/game/other">Other Game DOWNLOAD</a></h3>
@@ -917,16 +937,19 @@ mod tests {
     #[test]
     fn f95zone_skips_pagination_and_hash_links() {
         let cfg = SiteConfig {
-            name: "f95zone",
-            base_url: "https://f95zone.to",
+            name: "f95zone".to_string(),
+            base_url: "https://f95zone.to".to_string(),
             search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("q"),
+            query_param: Some("q".to_string()),
             listing_path: None,
-            result_selector: "a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <a href="/threads/elden-ring.12345/page-2">Page 2</a>
@@ -955,16 +978,19 @@ mod tests {
     fn primary_selector_with_parent_href() {
         // Tests the case where anchor doesn't have href but parent does
         let cfg = SiteConfig {
-            name: "example",
-            base_url: "https://example.com/",
+            name: "example".to_string(),
+            base_url: "https://example.com/".to_string(),
             search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("s"),
+            query_param: Some("s".to_string()),
             listing_path: None,
-            result_selector: "span.title",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <a href="/elden-ring"><span class="title">Elden Ring</span></a>
@@ -976,16 +1002,19 @@ mod tests {
     #[test]
     fn csrin_relative_url_without_leading_slash() {
         let cfg = SiteConfig {
-            name: "csrin",
-            base_url: "https://cs.rin.ru/forum",
+            name: "csrin".to_string(),
+            base_url: "https://cs.rin.ru/forum".to_string(),
             search_kind: crate::models::SearchKind::PhpBBSearch,
-            query_param: Some("keywords"),
+            query_param: Some("keywords".to_string()),
             listing_path: None,
-            result_selector: "a.topictitle",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "a.topictitle".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>search.php
             <a class="topictitle" href="viewtopic.php?t=99">Elden Ring</a>
@@ -1010,16 +1039,19 @@ mod tests {
     #[test]
     fn nswpedia_skips_non_domain_links() {
         let cfg = SiteConfig {
-            name: "nswpedia",
-            base_url: "https://nswpedia.com",
+            name: "nswpedia".to_string(),
+            base_url: "https://nswpedia.com".to_string(),
             search_kind: crate::models::SearchKind::QueryParam,
-            query_param: Some("s"),
+            query_param: Some("s".to_string()),
             listing_path: None,
-            result_selector: "h2 a",
-            title_attr: "text",
-            url_attr: "href",
+            result_selector: "h2 a".to_string(),
+            title_attr: "text".to_string(),
+            url_attr: "href".to_string(),
             requires_js: false,
             requires_cloudflare: false,
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            rate_limit_delay_ms: 1000,
         };
         let html = r#"<html><body>
             <h2><a href="https://other-site.com/zelda">Zelda on Other</a></h2>
