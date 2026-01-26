@@ -6,6 +6,14 @@ import App from "./App";
 vi.mock("./api", () => ({
   invokeSearch: vi.fn(),
   fetchSites: vi.fn().mockResolvedValue(["fitgirl", "dodi", "gog-games"]),
+  // Cache API mocks
+  getCache: vi.fn().mockResolvedValue([]),
+  getCachedResults: vi.fn().mockResolvedValue(null),
+  addToCache: vi.fn().mockResolvedValue(undefined),
+  removeCacheEntry: vi.fn().mockResolvedValue(true),
+  clearCache: vi.fn().mockResolvedValue(undefined),
+  getCacheSettings: vi.fn().mockResolvedValue(100),
+  setCacheSize: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { invokeSearch, fetchSites } from "./api";

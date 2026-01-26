@@ -26,12 +26,14 @@ function App() {
   const [siteOptions, setSiteOptions] = useState<string[]>([])
   const [selectedSites, setSelectedSites] = useState<string[]>([])
   const [limit, setLimit] = useState<number>(10)
+  const [cutoff, setCutoff] = useState<number>(0)
   const [noCf, setNoCf] = useState<boolean>(false)
   const [cfUrl, setCfUrl] = useState<string>('')
   const [cookie, setCookie] = useState<string>('')
   const [csrinPages, setCsrinPages] = useState<number>(1)
   const [csrinSearch, setCsrinSearch] = useState<boolean>(false)
   const [noPlaywright, setNoPlaywright] = useState<boolean>(false)
+  const [noRateLimit, setNoRateLimit] = useState<boolean>(false)
   const [debug, setDebug] = useState<boolean>(false)
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
 
@@ -159,6 +161,7 @@ function App() {
       const rs = await invokeSearch({
         query: q,
         limit,
+        cutoff: cutoff || undefined,
         sites: selectedSites.length ? selectedSites : undefined,
         debug,
         no_cf: noCf,
@@ -167,6 +170,7 @@ function App() {
         csrin_pages: csrinPages,
         csrin_search: csrinSearch,
         no_playwright: noPlaywright,
+        no_rate_limit: noRateLimit,
       })
       setResults(rs)
       // Add to cache if we got results
@@ -345,6 +349,10 @@ function App() {
             <input type="number" min={1} value={limit} onChange={(e) => setLimit(Number(e.target.value) || 1)} style={{ width: '100%', padding: 6 }} />
           </label>
           <label>
+            <span>Cutoff (total)</span>
+            <input type="number" min={0} value={cutoff} onChange={(e) => setCutoff(Number(e.target.value) || 0)} style={{ width: '100%', padding: 6 }} title="Maximum total results across all sites (0 = no limit)" />
+          </label>
+          <label>
             <span>CF URL</span>
             <input value={cfUrl} onChange={(e) => setCfUrl(e.target.value)} placeholder="http://localhost:8191/v1" style={{ width: '100%', padding: 6 }} />
           </label>
@@ -364,6 +372,9 @@ function App() {
           </label>
           <label>
             <input type="checkbox" checked={noCf} onChange={(e) => setNoCf(e.target.checked)} /> no_cf
+          </label>
+          <label>
+            <input type="checkbox" checked={noRateLimit} onChange={(e) => setNoRateLimit(e.target.checked)} /> no_rate_limit
           </label>
           <label>
             <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> debug

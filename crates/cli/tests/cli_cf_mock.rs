@@ -22,6 +22,7 @@ async fn cli_with_cf_mock_produces_results() {
         "fitgirl",
         "--cf-url",
         &server.url(),
+        "--no-cache",
     ]);
     // Avoid colored output ambiguity
     cmd.env("NO_COLOR", "1");
@@ -54,13 +55,13 @@ async fn cli_table_format_groups_by_site() {
         &server.url(),
         "--format",
         "table",
+        "--no-cache",
     ]);
     cmd.env("NO_COLOR", "1");
     cmd.env("NO_TABLE", "1");
 
     let assert = cmd.assert().success();
     let out = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
-    eprintln!("\nTABLE OUTPUT:\n{}\n", out);
     assert!(out.contains("fitgirl:"));
     assert!(out.contains("- Elden Ring One (https://fitgirl-repacks.site/game1)"));
     assert!(out.contains("- Elden Ring Two (https://fitgirl-repacks.site/game2)"));
@@ -86,6 +87,7 @@ async fn cli_csrin_listing_via_solver() {
         &server.url(),
         "--format",
         "table",
+        "--no-cache",
     ]);
     cmd.env("NO_COLOR", "1");
     cmd.env("NO_TABLE", "1");

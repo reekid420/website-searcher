@@ -24,6 +24,7 @@ async fn cli_cookie_forwarded_to_solver_payload() {
         "cf_clearance=abc; a=b",
         "--format",
         "json",
+        "--no-cache",
     ]);
     cmd.env("NO_COLOR", "1");
 

@@ -9,6 +9,7 @@ export type SearchResult = {
 export type SearchArgs = {
   query: string
   limit?: number
+  cutoff?: number
   sites?: string[]
   debug?: boolean
   no_cf?: boolean
@@ -17,6 +18,7 @@ export type SearchArgs = {
   csrin_pages?: number
   csrin_search?: boolean
   no_playwright?: boolean
+  no_rate_limit?: boolean
 }
 
 export async function invokeSearch(args: SearchArgs): Promise<SearchResult[]> {

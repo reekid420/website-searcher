@@ -27,6 +27,7 @@ async fn cli_dedup_and_limit_json() {
         "--format",
         "json",
         "--debug",
+        "--no-cache",
     ]);
     cmd.env("NO_COLOR", "1");
 
@@ -53,6 +54,7 @@ async fn cli_dedup_and_limit_json() {
         &server.url(),
         "--format",
         "json",
+        "--no-cache",
     ]);
     cmd2.env("NO_COLOR", "1");
     let assert2 = cmd2.assert().success();

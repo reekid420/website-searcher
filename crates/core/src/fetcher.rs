@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::rate_limiter::RateLimiter;
 use anyhow::{Context, Result};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use tokio::time::sleep;
@@ -18,33 +19,73 @@ pub fn build_http_client() -> Client {
         .expect("failed to build reqwest client")
 }
 
-pub async fn fetch_with_retry(client: &Client, url: &str) -> Result<String> {
+pub async fn fetch_with_retry(
+    client: &Client,
+    url: &str,
+    mut rate_limiter: Option<&mut RateLimiter>,
+    site_name: Option<&str>,
+) -> Result<String> {
+    let site = site_name.unwrap_or("unknown");
     let mut attempt: u32 = 0;
     let max_attempts: u32 = 3;
     let mut last_err: Option<anyhow::Error> = None;
 
     while attempt < max_attempts {
+        // Apply rate limiting if provided
+        if let Some(limiter) = rate_limiter.as_mut() {
+            if let Err(e) = limiter.wait_for_site(site).await {
+                return Err(anyhow::anyhow!("Rate limit error: {}", e));
+            }
+        }
+
+        let start_time = std::time::Instant::now();
         let resp = client.get(url).send().await;
+        let response_time = start_time.elapsed();
+
         match resp {
             Ok(r) => {
                 if r.status() == StatusCode::OK {
                     let text = r.text().await.context("read body text")?;
+
+                    // Record success with response time
+                    if let Some(limiter) = rate_limiter.as_mut() {
+                        limiter.record_success(site, response_time);
+                    }
+
                     return Ok(text);
                 } else if r.status().is_redirection() || r.status() == StatusCode::FORBIDDEN {
                     // Likely protected by anti-bot; return empty rather than hard fail
                     return Ok(String::new());
                 } else {
                     last_err = Some(anyhow::anyhow!("HTTP status {} for {}", r.status(), url));
+
+                    // Record failure
+                    if let Some(limiter) = rate_limiter.as_mut() {
+                        if let Err(e) = limiter.record_failure(site) {
+                            return Err(anyhow::anyhow!("Rate limit error: {}", e));
+                        }
+                    }
                 }
             }
             Err(e) => {
                 last_err = Some(e.into());
+
+                // Record failure
+                if let Some(limiter) = rate_limiter.as_mut() {
+                    if let Err(e) = limiter.record_failure(site) {
+                        return Err(anyhow::anyhow!("Rate limit error: {}", e));
+                    }
+                }
             }
         }
 
-        // Backoff 300ms * 2^attempt
-        let backoff_ms = 300u64.saturating_mul(1u64 << attempt);
-        sleep(Duration::from_millis(backoff_ms)).await;
+        // Exponential backoff with jitter (handled by RateLimiter's wait_for_site)
+        // But we still need a small delay for retries when rate limiter is not used
+        if rate_limiter.is_none() {
+            let backoff_ms = 300u64.saturating_mul(1u64 << attempt);
+            sleep(Duration::from_millis(backoff_ms)).await;
+        }
+
         attempt += 1;
     }
 
@@ -55,35 +96,71 @@ pub async fn fetch_with_retry_headers(
     client: &Client,
     url: &str,
     headers: Option<HeaderMap>,
+    mut rate_limiter: Option<&mut RateLimiter>,
+    site_name: Option<&str>,
 ) -> Result<String> {
+    let site = site_name.unwrap_or("unknown");
     let mut attempt: u32 = 0;
     let max_attempts: u32 = 3;
     let mut last_err: Option<anyhow::Error> = None;
 
     while attempt < max_attempts {
+        // Apply rate limiting if provided
+        if let Some(limiter) = rate_limiter.as_mut() {
+            if let Err(e) = limiter.wait_for_site(site).await {
+                return Err(anyhow::anyhow!("Rate limit error: {}", e));
+            }
+        }
+
+        let start_time = std::time::Instant::now();
         let mut rb = client.get(url);
         if let Some(h) = headers.clone() {
             rb = rb.headers(h);
         }
         let resp = rb.send().await;
+        let response_time = start_time.elapsed();
+
         match resp {
             Ok(r) => {
                 if r.status() == StatusCode::OK {
                     let text = r.text().await.context("read body text")?;
+
+                    // Record success with response time
+                    if let Some(limiter) = rate_limiter.as_mut() {
+                        limiter.record_success(site, response_time);
+                    }
+
                     return Ok(text);
                 } else if r.status().is_redirection() || r.status() == StatusCode::FORBIDDEN {
                     return Ok(String::new());
                 } else {
                     last_err = Some(anyhow::anyhow!("HTTP status {} for {}", r.status(), url));
+
+                    // Record failure
+                    if let Some(limiter) = rate_limiter.as_mut() {
+                        if let Err(e) = limiter.record_failure(site) {
+                            return Err(anyhow::anyhow!("Rate limit error: {}", e));
+                        }
+                    }
                 }
             }
             Err(e) => {
                 last_err = Some(e.into());
+
+                // Record failure
+                if let Some(limiter) = rate_limiter.as_mut() {
+                    if let Err(e) = limiter.record_failure(site) {
+                        return Err(anyhow::anyhow!("Rate limit error: {}", e));
+                    }
+                }
             }
         }
 
-        let backoff_ms = 300u64.saturating_mul(1u64 << attempt);
-        sleep(Duration::from_millis(backoff_ms)).await;
+        if rate_limiter.is_none() {
+            let backoff_ms = 300u64.saturating_mul(1u64 << attempt);
+            sleep(Duration::from_millis(backoff_ms)).await;
+        }
+
         attempt += 1;
     }
 
@@ -105,7 +182,7 @@ mod tests {
             .create_async()
             .await;
         let client = build_http_client();
-        let body = fetch_with_retry(&client, &format!("{}/ok", server.url()))
+        let body = fetch_with_retry(&client, &format!("{}/ok", server.url()), None, Some("test"))
             .await
             .unwrap();
         assert_eq!(body, "hello");
@@ -120,9 +197,14 @@ mod tests {
             .create_async()
             .await;
         let client = build_http_client();
-        let body = fetch_with_retry(&client, &format!("{}/redir", server.url()))
-            .await
-            .unwrap();
+        let body = fetch_with_retry(
+            &client,
+            &format!("{}/redir", server.url()),
+            None,
+            Some("test"),
+        )
+        .await
+        .unwrap();
         assert_eq!(body, "");
     }
 
@@ -135,9 +217,14 @@ mod tests {
             .create_async()
             .await;
         let client = build_http_client();
-        let body = fetch_with_retry(&client, &format!("{}/forbid", server.url()))
-            .await
-            .unwrap();
+        let body = fetch_with_retry(
+            &client,
+            &format!("{}/forbid", server.url()),
+            None,
+            Some("test"),
+        )
+        .await
+        .unwrap();
         assert_eq!(body, "");
     }
 
@@ -161,7 +248,13 @@ mod tests {
             .create_async()
             .await;
         let client = build_http_client();
-        let res = fetch_with_retry(&client, &format!("{}/fail", server.url())).await;
+        let res = fetch_with_retry(
+            &client,
+            &format!("{}/fail", server.url()),
+            None,
+            Some("test"),
+        )
+        .await;
         assert!(res.is_err());
     }
 
@@ -182,9 +275,15 @@ mod tests {
             reqwest::header::HeaderName::from_static("x-test"),
             reqwest::header::HeaderValue::from_static("1"),
         );
-        let body = fetch_with_retry_headers(&client, &format!("{}/hdr", server.url()), Some(hm))
-            .await
-            .unwrap();
+        let body = fetch_with_retry_headers(
+            &client,
+            &format!("{}/hdr", server.url()),
+            Some(hm),
+            None,
+            Some("test"),
+        )
+        .await
+        .unwrap();
         assert_eq!(body, "ok");
     }
 
@@ -198,9 +297,15 @@ mod tests {
             .create_async()
             .await;
         let client = build_http_client();
-        let body = fetch_with_retry_headers(&client, &format!("{}/no-hdr", server.url()), None)
-            .await
-            .unwrap();
+        let body = fetch_with_retry_headers(
+            &client,
+            &format!("{}/no-hdr", server.url()),
+            None,
+            None,
+            Some("test"),
+        )
+        .await
+        .unwrap();
         assert_eq!(body, "no header");
     }
 
@@ -213,9 +318,15 @@ mod tests {
             .create_async()
             .await;
         let client = build_http_client();
-        let body = fetch_with_retry_headers(&client, &format!("{}/hdr-redir", server.url()), None)
-            .await
-            .unwrap();
+        let body = fetch_with_retry_headers(
+            &client,
+            &format!("{}/hdr-redir", server.url()),
+            None,
+            None,
+            Some("test"),
+        )
+        .await
+        .unwrap();
         assert_eq!(body, "");
     }
 
@@ -228,9 +339,15 @@ mod tests {
             .create_async()
             .await;
         let client = build_http_client();
-        let body = fetch_with_retry_headers(&client, &format!("{}/hdr-forbid", server.url()), None)
-            .await
-            .unwrap();
+        let body = fetch_with_retry_headers(
+            &client,
+            &format!("{}/hdr-forbid", server.url()),
+            None,
+            None,
+            Some("test"),
+        )
+        .await
+        .unwrap();
         assert_eq!(body, "");
     }
 
@@ -253,8 +370,14 @@ mod tests {
             .create_async()
             .await;
         let client = build_http_client();
-        let res =
-            fetch_with_retry_headers(&client, &format!("{}/hdr-fail", server.url()), None).await;
+        let res = fetch_with_retry_headers(
+            &client,
+            &format!("{}/hdr-fail", server.url()),
+            None,
+            None,
+            Some("test"),
+        )
+        .await;
         assert!(res.is_err());
     }
 }

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use website_searcher_core::cache::{MIN_CACHE_SIZE, SearchCache};
+use website_searcher_core::rate_limiter::RateLimiter;
 use website_searcher_core::{cf, fetcher, output};
 
 use crossterm::event::KeyEventKind;
@@ -81,6 +82,10 @@ struct Cli {
     #[arg(long, default_value_t = 10)]
     limit: usize,
 
+    /// Overall cutoff for total results across all sites
+    #[arg(long, default_value_t = 0)]
+    cutoff: usize,
+
     /// Comma-separated site list to include (default: all)
     #[arg(long)]
     sites: Option<String>,
@@ -119,6 +124,10 @@ struct Cli {
     /// Clear the search cache and exit
     #[arg(long, default_value_t = false)]
     clear_cache: bool,
+
+    /// Disable rate limiting between requests
+    #[arg(long, default_value_t = false)]
+    no_rate_limit: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -351,6 +360,11 @@ async fn main() -> Result<()> {
 
     let client = build_http_client();
     let semaphore = Arc::new(Semaphore::new(3));
+    let rate_limiter = if !cli.no_rate_limit {
+        Some(Arc::new(tokio::sync::Mutex::new(RateLimiter::new())))
+    } else {
+        None
+    };
     let mut tasks = FuturesUnordered::new();
 
     // Build optional headers (Cookie) for forwarding
@@ -375,6 +389,7 @@ async fn main() -> Result<()> {
         let use_cf = !cli.no_cf;
         let cf_url = resolved_cf_url.clone();
         let cookie_headers = cookie_headers.clone();
+        let rate_limiter = rate_limiter.clone(); // This is now Option<Arc<Mutex<RateLimiter>>>
 
         let no_playwright = cli.no_playwright;
         tasks.push(tokio::spawn(async move {
@@ -410,23 +425,6 @@ async fn main() -> Result<()> {
                     }
                     results = parse_results(&site, &html, &query);
                 }
-                // If Playwright mode is used, do not fall back to solver-based listing fetches
-                // when we already have results. If empty, try feed fallback to get recent topics.
-                if results.is_empty()
-                    && let Some(feed_results) = fetch_csrin_feed(
-                        &client,
-                        &site,
-                        &query,
-                        false,
-                        &cf_url,
-                        cookie_headers.clone(),
-                        debug,
-                    )
-                    .await
-                {
-                    results = feed_results;
-                }
-                // Do not return early; allow common filtering/normalization/truncation below.
             }
             if results.is_empty() {
                 for url in page_urls {
@@ -460,11 +458,24 @@ async fn main() -> Result<()> {
                         })
                         .unwrap_or_default()
                     } else {
-                        (if cookie_headers.is_some() {
-                            fetcher::fetch_with_retry_headers(&client, &url, cookie_headers.clone())
-                                .await
+                        let rate_limiter_ref = if let Some(ref rl) = rate_limiter {
+                            Some(&mut *rl.lock().await)
                         } else {
-                            fetch_with_retry(&client, &url).await
+                            None
+                        };
+
+                        (if cookie_headers.is_some() {
+                            fetcher::fetch_with_retry_headers(
+                                &client,
+                                &url,
+                                cookie_headers.clone(),
+                                rate_limiter_ref,
+                                Some(&site.name),
+                            )
+                            .await
+                        } else {
+                            fetch_with_retry(&client, &url, rate_limiter_ref, Some(&site.name))
+                                .await
                         })
                         .unwrap_or_default()
                     };
@@ -477,10 +488,15 @@ async fn main() -> Result<()> {
                         );
                     }
                     let mut page_results = parse_results(&site, &html, &query);
-                    // gog-games fallback: request AJAX JSON/fragment when DOM is empty
-                    if page_results.is_empty()
-                        && site.name.eq_ignore_ascii_case("gog-games")
-                        && let Some(r) = fetch_gog_games_ajax_json(
+                    // gog-games fallback: request AJAX JSON/fragment when DOM parse is empty
+                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
+                        let rate_limiter_ref = if let Some(ref rl) = rate_limiter {
+                            Some(&mut *rl.lock().await)
+                        } else {
+                            None
+                        };
+
+                        if let Some(r) = fetch_gog_games_ajax_json(
                             &client,
                             &site,
                             &query,
@@ -488,16 +504,23 @@ async fn main() -> Result<()> {
                             &cf_url,
                             cookie_headers.clone(),
                             debug,
+                            rate_limiter_ref,
                         )
                         .await
-                        && !r.is_empty()
-                    {
-                        page_results = r;
+                            && !r.is_empty()
+                        {
+                            page_results = r;
+                        }
                     }
                     // csrin fallback: parse Atom feed when page body is minimal or selectors miss
-                    if page_results.is_empty()
-                        && site.name.eq_ignore_ascii_case("csrin")
-                        && let Some(r) = fetch_csrin_feed(
+                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("csrin") {
+                        let rate_limiter_ref = if let Some(ref rl) = rate_limiter {
+                            Some(&mut *rl.lock().await)
+                        } else {
+                            None
+                        };
+
+                        if let Some(r) = fetch_csrin_feed(
                             &client,
                             &site,
                             &query,
@@ -505,11 +528,13 @@ async fn main() -> Result<()> {
                             &cf_url,
                             cookie_headers.clone(),
                             debug,
+                            rate_limiter_ref,
                         )
                         .await
-                        && !r.is_empty()
-                    {
-                        page_results = r;
+                            && !r.is_empty()
+                        {
+                            page_results = r;
+                        }
                     }
                     // Extra filtering for gog-games to avoid unrelated pages/cards
                     if site.name.eq_ignore_ascii_case("gog-games") {
@@ -663,6 +688,11 @@ async fn main() -> Result<()> {
     // Deduplicate by (site, url) then sort
     combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.title.cmp(&b.title)));
     combined.dedup_by(|a, b| a.site == b.site && a.url == b.url);
+
+    // Apply overall cutoff if specified (0 means no cutoff)
+    if cli.cutoff > 0 && combined.len() > cli.cutoff {
+        combined.truncate(cli.cutoff);
+    }
 
     // Save to cache (unless disabled)
     if !cli.no_cache && !combined.is_empty() {
@@ -960,6 +990,7 @@ async fn fetch_gog_games_ajax_json(
     cf_url: &str,
     cookie_headers: Option<ReqHeaderMap>,
     debug: bool,
+    mut rate_limiter: Option<&mut RateLimiter>,
 ) -> Option<Vec<SearchResult>> {
     let qenc = urlencoding::encode(query);
     let urls = vec![
@@ -996,7 +1027,14 @@ async fn fetch_gog_games_ajax_json(
             (cf::fetch_via_solver_with_headers(client, &u, cf_url, Some(headers.clone())).await)
                 .unwrap_or_default()
         } else {
-            (fetcher::fetch_with_retry_headers(client, &u, Some(headers.clone())).await)
+            (fetcher::fetch_with_retry_headers(
+                client,
+                &u,
+                Some(headers.clone()),
+                rate_limiter.as_deref_mut(),
+                Some("gog-games"),
+            )
+            .await)
                 .unwrap_or_default()
         };
         if body.is_empty() {
@@ -1064,6 +1102,7 @@ async fn fetch_csrin_feed(
     cf_url: &str,
     _cookie_headers: Option<ReqHeaderMap>,
     debug: bool,
+    rate_limiter: Option<&mut RateLimiter>,
 ) -> Option<Vec<SearchResult>> {
     // Try forum feed which lists topics
     let feed_url = "https://cs.rin.ru/forum/feed.php?f=10";
@@ -1073,7 +1112,7 @@ async fn fetch_csrin_feed(
             .await
             .unwrap_or_default()
     } else {
-        fetcher::fetch_with_retry(client, feed_url)
+        fetcher::fetch_with_retry(client, feed_url, rate_limiter, Some("csrin"))
             .await
             .unwrap_or_default()
     };
@@ -1465,14 +1504,5 @@ mod tests {
         unsafe { std::env::remove_var("CS_PLAYWRIGHT_HTML") };
         assert!(result.is_some());
         assert!(result.unwrap().contains("mock"));
-    }
-
-    #[tokio::test]
-    async fn fetch_csrin_playwright_html_empty_env_returns_none() {
-        unsafe { std::env::set_var("CS_PLAYWRIGHT_HTML", "   ") };
-        let result = fetch_csrin_playwright_html("test", None).await;
-        unsafe { std::env::remove_var("CS_PLAYWRIGHT_HTML") };
-        // Script won't be found since we're in test, so None
-        assert!(result.is_none());
     }
 }

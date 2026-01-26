@@ -6,6 +6,7 @@ use reqwest::header::{
 };
 use tokio::sync::Semaphore;
 use website_searcher_core::cache::{MIN_CACHE_SIZE, SearchCache};
+use website_searcher_core::rate_limiter::RateLimiter;
 use website_searcher_core::{cf, config, fetcher, models, parser, query};
 
 /// Get the shared cache file path (same as CLI uses)
@@ -20,6 +21,7 @@ fn get_cache_path() -> std::path::PathBuf {
 struct SearchArgs {
     query: String,
     limit: Option<usize>,
+    cutoff: Option<usize>,
     sites: Option<Vec<String>>, // names
     debug: Option<bool>,
     no_cf: Option<bool>,
@@ -28,6 +30,7 @@ struct SearchArgs {
     csrin_pages: Option<usize>,
     csrin_search: Option<bool>,
     no_playwright: Option<bool>,
+    no_rate_limit: Option<bool>,
 }
 
 #[tauri::command]
@@ -199,6 +202,11 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
 
     let client = fetcher::build_http_client();
     let semaphore = Arc::new(Semaphore::new(3));
+    let rate_limiter = if !args.no_rate_limit.unwrap_or(false) {
+        Some(Arc::new(tokio::sync::Mutex::new(RateLimiter::new())))
+    } else {
+        None
+    };
 
     // Optional Cookie header
     let cookie_headers: Option<ReqHeaderMap> = if let Some(c) = args.cookie.as_deref() {
@@ -228,6 +236,7 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
         let csrin_pages = args.csrin_pages.unwrap_or(1);
         let csrin_search = args.csrin_search.unwrap_or(false);
         let no_playwright = args.no_playwright.unwrap_or(false);
+        let rate_limiter = rate_limiter.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
             let base_url = match site.search_kind {
@@ -304,40 +313,72 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
                         })
                         .unwrap_or_default()
                     } else {
-                        (if cookie_headers.is_some() {
-                            fetcher::fetch_with_retry_headers(&client, &url, cookie_headers.clone())
-                                .await
+                        let rate_limiter_ref = if let Some(ref rl) = rate_limiter {
+                            Some(&mut *rl.lock().await)
                         } else {
-                            fetcher::fetch_with_retry(&client, &url).await
+                            None
+                        };
+
+                        (if cookie_headers.is_some() {
+                            fetcher::fetch_with_retry_headers(
+                                &client,
+                                &url,
+                                cookie_headers.clone(),
+                                rate_limiter_ref,
+                                Some(&site.name),
+                            )
+                            .await
+                        } else {
+                            fetcher::fetch_with_retry(
+                                &client,
+                                &url,
+                                rate_limiter_ref,
+                                Some(&site.name),
+                            )
+                            .await
                         })
                         .unwrap_or_default()
                     };
                     let mut page_results = parser::parse_results(&site, &html, &query);
                     // gog-games: try AJAX/JSON fragment fallbacks when DOM parse is empty
-                    if page_results.is_empty()
-                        && site.name.eq_ignore_ascii_case("gog-games")
-                        && let Some(r) = fetch_gog_games_ajax_json(
+                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("gog-games") {
+                        let rate_limiter_ref = if let Some(ref rl) = rate_limiter {
+                            Some(&mut *rl.lock().await)
+                        } else {
+                            None
+                        };
+
+                        if let Some(r) = fetch_gog_games_ajax_json(
                             &client,
                             &site,
                             &query,
                             use_cf,
                             &cf_url,
                             cookie_headers.clone(),
+                            rate_limiter_ref,
                         )
                         .await
-                        && !r.is_empty()
-                    {
-                        page_results = r;
+                            && !r.is_empty()
+                        {
+                            page_results = r;
+                        }
                     }
                     if site.name.eq_ignore_ascii_case("gog-games") {
                         filter_results_by_query_strict(&mut page_results, &query);
                     }
                     // csrin: Atom feed fallback
-                    if page_results.is_empty()
-                        && site.name.eq_ignore_ascii_case("csrin")
-                        && let Some(feed_results) = fetch_csrin_feed(&client, &site, &query).await
-                    {
-                        page_results = feed_results;
+                    if page_results.is_empty() && site.name.eq_ignore_ascii_case("csrin") {
+                        let rate_limiter_ref = if let Some(ref rl) = rate_limiter {
+                            Some(&mut *rl.lock().await)
+                        } else {
+                            None
+                        };
+
+                        if let Some(feed_results) =
+                            fetch_csrin_feed(&client, &site, &query, rate_limiter_ref).await
+                        {
+                            page_results = feed_results;
+                        }
                     }
                     results.extend(page_results);
                     if results.len() >= 5000 {
@@ -383,6 +424,14 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
     // Dedup + sort
     combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.title.cmp(&b.title)));
     combined.dedup_by(|a, b| a.site == b.site && a.url == b.url);
+
+    // Apply overall cutoff if specified (0 means no cutoff)
+    if let Some(cutoff) = args.cutoff {
+        if cutoff > 0 && combined.len() > cutoff {
+            combined.truncate(cutoff);
+        }
+    }
+
     Ok(combined)
 }
 
@@ -419,9 +468,12 @@ async fn fetch_csrin_feed(
     client: &reqwest::Client,
     site: &website_searcher_core::models::SiteConfig,
     query: &str,
+    rate_limiter: Option<&mut RateLimiter>,
 ) -> Option<Vec<models::SearchResult>> {
     let feed_url = "https://cs.rin.ru/forum/feed.php?f=10";
-    let body = fetcher::fetch_with_retry(client, feed_url).await.ok()?;
+    let body = fetcher::fetch_with_retry(client, feed_url, rate_limiter, Some("csrin"))
+        .await
+        .ok()?;
     if body.is_empty() {
         return None;
     }
@@ -552,6 +604,7 @@ async fn fetch_gog_games_ajax_json(
     use_cf: bool,
     cf_url: &str,
     cookie_headers: Option<ReqHeaderMap>,
+    mut rate_limiter: Option<&mut RateLimiter>,
 ) -> Option<Vec<models::SearchResult>> {
     let qenc = urlencoding::encode(query);
     let urls = vec![
@@ -589,7 +642,14 @@ async fn fetch_gog_games_ajax_json(
             (cf::fetch_via_solver_with_headers(client, &u, cf_url, Some(headers.clone())).await)
                 .unwrap_or_default()
         } else {
-            (fetcher::fetch_with_retry_headers(client, &u, Some(headers.clone())).await)
+            (fetcher::fetch_with_retry_headers(
+                client,
+                &u,
+                Some(headers.clone()),
+                rate_limiter.as_deref_mut(),
+                Some("gog-games"),
+            )
+            .await)
                 .unwrap_or_default()
         };
         if body.is_empty() {
@@ -889,6 +949,7 @@ mod tests {
         let args = SearchArgs {
             query: "   ".to_string(),
             limit: None,
+            cutoff: None,
             sites: None,
             debug: None,
             no_cf: None,
@@ -897,6 +958,7 @@ mod tests {
             csrin_pages: None,
             csrin_search: None,
             no_playwright: None,
+            no_rate_limit: None,
         };
         let result = search_gui(args).await;
         assert!(result.is_err());
@@ -972,6 +1034,7 @@ mod tests {
         let args = SearchArgs {
             query: "test".to_string(),
             limit: Some(1),
+            cutoff: None,
             sites: Some(vec!["unknown-fake-site".to_string()]),
             debug: None,
             no_cf: Some(true),
@@ -980,6 +1043,7 @@ mod tests {
             csrin_pages: None,
             csrin_search: None,
             no_playwright: Some(true),
+            no_rate_limit: None,
         };
         let result = search_gui(args).await;
         // Should succeed but return empty (no matching site)

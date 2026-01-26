@@ -1,11 +1,14 @@
 use crate::models::SearchResult;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Minimum cache size (default)
 pub const MIN_CACHE_SIZE: usize = 3;
 /// Maximum cache size
 pub const MAX_CACHE_SIZE: usize = 20;
+/// Default TTL for cache entries (12 hours)
+pub const DEFAULT_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// A single cached search entry
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -16,6 +19,46 @@ pub struct CacheEntry {
     pub results: Vec<SearchResult>,
     /// Unix timestamp when the search was performed
     pub timestamp: u64,
+    /// Time-to-live for this entry in seconds (default 12 hours)
+    #[serde(default = "default_ttl_seconds")]
+    pub ttl: u64,
+}
+
+/// Default TTL in seconds (12 hours)
+fn default_ttl_seconds() -> u64 {
+    DEFAULT_TTL.as_secs()
+}
+
+impl CacheEntry {
+    /// Check if this cache entry has expired
+    pub fn is_expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Check if the entry is older than its TTL
+        now.saturating_sub(self.timestamp) > self.ttl
+    }
+
+    /// Get the age of this entry (seconds since creation)
+    pub fn age(&self) -> u64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        now.saturating_sub(self.timestamp)
+    }
+
+    /// Get the remaining TTL (seconds until expiration)
+    pub fn remaining_ttl(&self) -> u64 {
+        if self.is_expired() {
+            0
+        } else {
+            let age = self.age();
+            self.ttl.saturating_sub(age)
+        }
+    }
 }
 
 /// Search result cache with LRU-like behavior
@@ -67,18 +110,25 @@ impl SearchCache {
     }
 
     /// Get cached results for a query (case-insensitive match)
+    /// Returns None if entry is expired
     pub fn get(&self, query: &str) -> Option<&CacheEntry> {
         let query_lower = query.to_lowercase();
         self.entries
             .iter()
-            .find(|e| e.query.to_lowercase() == query_lower)
+            .find(|e| e.query.to_lowercase() == query_lower && !e.is_expired())
     }
 
     /// Add a search to the cache
     /// If the query already exists, it's updated and moved to the end (most recent)
     pub fn add(&mut self, query: String, results: Vec<SearchResult>) {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        self.add_with_ttl(query, results, DEFAULT_TTL);
+    }
+
+    /// Add a search to the cache with custom TTL
+    /// If the query already exists, it's updated and moved to the end (most recent)
+    pub fn add_with_ttl(&mut self, query: String, results: Vec<SearchResult>, ttl: Duration) {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
@@ -92,6 +142,7 @@ impl SearchCache {
             query,
             results,
             timestamp,
+            ttl: ttl.as_secs(),
         });
 
         // Evict oldest if we exceed max size
@@ -119,15 +170,33 @@ impl SearchCache {
         &self.entries
     }
 
+    /// Get mutable access to all entries (for testing)
+    #[cfg(test)]
+    pub fn entries_mut(&mut self) -> &mut Vec<CacheEntry> {
+        &mut self.entries
+    }
+
     /// Get entries in reverse order (newest first)
     pub fn entries_newest_first(&self) -> impl Iterator<Item = &CacheEntry> {
         self.entries.iter().rev()
     }
 
+    /// Remove all expired entries from the cache
+    pub fn cleanup_expired(&mut self) {
+        self.entries.retain(|e| !e.is_expired());
+    }
+
+    /// Get the number of expired entries (without removing them)
+    pub fn expired_count(&self) -> usize {
+        self.entries.iter().filter(|e| e.is_expired()).count()
+    }
+
     /// Load cache from a JSON file
     pub async fn load_from_file(path: &Path) -> anyhow::Result<Self> {
         let content = tokio::fs::read_to_string(path).await?;
-        let cache: SearchCache = serde_json::from_str(&content)?;
+        let mut cache: SearchCache = serde_json::from_str(&content)?;
+        // Clean up expired entries on load
+        cache.cleanup_expired();
         Ok(cache)
     }
 
@@ -145,7 +214,9 @@ impl SearchCache {
     /// Load cache from file synchronously
     pub fn load_from_file_sync(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let cache: SearchCache = serde_json::from_str(&content)?;
+        let mut cache: SearchCache = serde_json::from_str(&content)?;
+        // Clean up expired entries on load
+        cache.cleanup_expired();
         Ok(cache)
     }
 
@@ -323,5 +394,105 @@ mod tests {
 
         let queries: Vec<_> = cache.entries_newest_first().map(|e| &e.query).collect();
         assert_eq!(queries, vec!["third", "second", "first"]);
+    }
+
+    #[test]
+    fn cache_entry_ttl_and_expiration() {
+        let mut cache = SearchCache::with_default_size();
+
+        // Add entry with 1 second TTL
+        cache.add_with_ttl("test".to_string(), vec![], Duration::from_secs(1));
+
+        // Should be found immediately
+        assert!(cache.get("test").is_some());
+
+        // Simulate time passing (manually set timestamp in the past)
+        if let Some(entry) = cache.entries_mut().last_mut() {
+            entry.timestamp = 0; // Set to epoch
+        }
+
+        // Now it should be expired
+        assert!(cache.get("test").is_none());
+    }
+
+    #[test]
+    fn cache_cleanup_expired() {
+        let mut cache = SearchCache::new(5);
+
+        // Add entries with different TTLs
+        cache.add_with_ttl(
+            "fresh".to_string(),
+            vec![],
+            Duration::from_secs(12 * 60 * 60),
+        );
+        cache.add_with_ttl("old".to_string(), vec![], Duration::from_secs(1));
+
+        // Simulate time passing for the old entry
+        for entry in cache.entries_mut().iter_mut() {
+            if entry.query == "old" {
+                entry.timestamp = 0;
+            }
+        }
+
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.expired_count(), 1);
+
+        // Cleanup should remove expired entries
+        cache.cleanup_expired();
+
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get("fresh").is_some());
+        assert!(cache.get("old").is_none());
+    }
+
+    #[test]
+    fn cache_entry_age_and_remaining_ttl() {
+        let entry = CacheEntry {
+            query: "test".to_string(),
+            results: vec![],
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                - 3600, // 1 hour ago
+            ttl: DEFAULT_TTL.as_secs(),
+        };
+
+        // Age should be approximately 1 hour
+        assert!(entry.age() >= 3590 && entry.age() <= 3610);
+
+        // Remaining TTL should be approximately 11 hours
+        let remaining = entry.remaining_ttl();
+        assert!(remaining >= 11 * 60 * 60 - 10 && remaining <= 11 * 60 * 60 + 10);
+    }
+
+    #[test]
+    fn cache_loads_and_cleans_expired() {
+        let mut cache = SearchCache::new(5);
+        cache.add_with_ttl(
+            "valid".to_string(),
+            vec![],
+            Duration::from_secs(12 * 60 * 60),
+        );
+        cache.add_with_ttl("expired".to_string(), vec![], Duration::from_secs(1));
+
+        // Manually expire one entry
+        for entry in cache.entries_mut().iter_mut() {
+            if entry.query == "expired" {
+                entry.timestamp = 0;
+            }
+        }
+
+        // Serialize and deserialize
+        let json = serde_json::to_string(&cache).unwrap();
+        let mut loaded: SearchCache = serde_json::from_str(&json).unwrap();
+
+        // Manually cleanup expired entries (simulating what load_from_file does)
+        loaded.cleanup_expired();
+
+        // Expired entry should be automatically cleaned
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded.get("valid").is_some());
+        assert!(loaded.get("expired").is_none());
     }
 }

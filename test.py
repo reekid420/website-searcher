@@ -94,7 +94,11 @@ def run_cmd(cmd, shell: bool = False, check: bool = True,
             )
             
             for line in process.stdout:
-                print(line, end='')
+                try:
+                    print(line, end='')
+                except UnicodeEncodeError:
+                    # Strip non-ASCII for Windows cp1252 compatibility
+                    print(line.encode('ascii', 'replace').decode(), end='')
             
             process.wait()
             
@@ -339,9 +343,9 @@ Examples:
     # Determine what to run
     run_all = args.all or not (args.rust or args.gui or args.e2e or args.audit or args.clippy)
     
-    print(f"\n{CYAN}╔═══════════════════════════════════════╗{RESET}")
-    print(f"{CYAN}║     Website Searcher Test Suite       ║{RESET}")
-    print(f"{CYAN}╚═══════════════════════════════════════╝{RESET}\n")
+    print(f"\n{CYAN}+=========================================+{RESET}")
+    print(f"{CYAN}|     Website Searcher Test Suite       |{RESET}")
+    print(f"{CYAN}+=========================================+{RESET}\n")
     
     results = {}
     
@@ -367,16 +371,16 @@ Examples:
             results["Audit"] = run_audit()
         
         # Summary
-        print(f"\n{CYAN}═══════════════════════════════════════{RESET}")
+        print(f"\n{CYAN}========================================={RESET}")
         print(f"{CYAN}              Test Summary             {RESET}")
-        print(f"{CYAN}═══════════════════════════════════════{RESET}\n")
+        print(f"{CYAN}========================================={RESET}\n")
         
         all_passed = True
         for name, passed in results.items():
             if passed:
-                print(f"  {GREEN}✓{RESET} {name}")
+                print(f"  {GREEN}[OK]{RESET} {name}")
             else:
-                print(f"  {RED}✗{RESET} {name}")
+                print(f"  {RED}[FAIL]{RESET} {name}")
                 all_passed = False
         
         print()
@@ -395,3 +399,4 @@ Examples:
 
 if __name__ == "__main__":
     sys.exit(main())
+
