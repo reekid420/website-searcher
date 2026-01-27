@@ -20,12 +20,31 @@ pub fn init_monitoring() -> anyhow::Result<()> {
 
 /// Initialize monitoring with option to suppress logging for JSON output
 pub fn init_monitoring_with_json(json_output: bool) -> anyhow::Result<()> {
+    init_monitoring_with_levels(json_output, false, false)
+}
+
+/// Initialize monitoring with verbose and debug level controls
+/// - json_output: if true, suppress non-error logs
+/// - verbose: if true, show info-level logs
+/// - debug_mode: if true, show debug-level logs (supersedes verbose)
+pub fn init_monitoring_with_levels(
+    json_output: bool,
+    verbose: bool,
+    debug_mode: bool,
+) -> anyhow::Result<()> {
     // Initialize tracing subscriber
     if json_output {
         // For JSON output, use a minimal logger that only writes errors
         init_tracing_json();
+    } else if debug_mode {
+        // Debug mode - show all debug-level and above logs
+        init_tracing_with_level("debug");
+    } else if verbose {
+        // Verbose mode - show info-level and above logs
+        init_tracing_with_level("info");
     } else {
-        init_tracing();
+        // Default mode - only show error-level logs
+        init_tracing_with_level("error");
     }
 
     // Skip metrics exporter in tests or when disabled
@@ -40,7 +59,7 @@ pub fn init_monitoring_with_json(json_output: bool) -> anyhow::Result<()> {
         .with_http_listener(([0, 0, 0, 0], port))
         .install()?;
 
-    if !json_output {
+    if verbose || debug_mode {
         info!("Monitoring system initialized");
         info!(
             "Metrics endpoint available at http://localhost:{}/metrics",
@@ -49,6 +68,18 @@ pub fn init_monitoring_with_json(json_output: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Initialize tracing with a specific log level
+fn init_tracing_with_level(level: &str) {
+    let filter = format!("website_searcher={},tower_http={}", level, level);
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()),
+        )
+        .with_target(false)
+        .with_thread_ids(false)
+        .init();
 }
 
 /// Initialize tracing for JSON output (errors only)

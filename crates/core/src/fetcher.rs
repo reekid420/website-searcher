@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::anti_detection::AntiDetectionConfig;
 use crate::monitoring::get_metrics;
 use crate::rate_limiter::RateLimiter;
 use anyhow::{Context, Result};
@@ -7,9 +8,23 @@ use reqwest::{Client, StatusCode, header::HeaderMap};
 use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, warn};
 
+/// Global anti-detection config for user agent rotation
+static ANTI_DETECTION: std::sync::OnceLock<AntiDetectionConfig> = std::sync::OnceLock::new();
+
+/// Get or initialize the global anti-detection config
+pub fn get_anti_detection_config() -> &'static AntiDetectionConfig {
+    ANTI_DETECTION.get_or_init(|| {
+        AntiDetectionConfig::new()
+            .with_ua_rotation()
+            .with_header_randomization()
+    })
+}
+
+/// Build HTTP client with rotating user agent from anti-detection module
 pub fn build_http_client() -> Client {
+    let ua = get_anti_detection_config().get_user_agent();
     Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 website-searcher/0.1")
+        .user_agent(ua)
         .gzip(true)
         .brotli(true)
         // leave HTTP/2 settings at defaults

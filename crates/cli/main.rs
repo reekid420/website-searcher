@@ -3,11 +3,15 @@ use clap::{Parser, ValueEnum};
 use futures::stream::{FuturesUnordered, StreamExt};
 use scraper::{Html, Selector};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, mpsc};
 
+use website_searcher_core::analyzer::deduplicate_results;
 use website_searcher_core::cache::{MIN_CACHE_SIZE, SearchCache};
 use website_searcher_core::models::SiteConfig;
 use website_searcher_core::monitoring;
+use website_searcher_core::query_parser::{
+    AdvancedQuery, MultiQuery, filter_results, operator_help,
+};
 use website_searcher_core::rate_limiter::RateLimiter;
 use website_searcher_core::{cf, fetcher, output};
 
@@ -15,7 +19,7 @@ use crossterm::event::KeyEventKind;
 use crossterm::{event, execute, terminal};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
 use reqwest::header::{
     ACCEPT, COOKIE, HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, REFERER,
@@ -32,6 +36,63 @@ use website_searcher_core::fetcher::{build_http_client, fetch_with_retry};
 use website_searcher_core::models::{SearchKind, SearchResult};
 use website_searcher_core::parser::parse_results;
 use website_searcher_core::query::{build_search_url, normalize_query};
+
+/// Events emitted during search for real-time progress updates
+#[derive(Debug, Clone)]
+pub enum SearchEvent {
+    /// Search is starting for a site
+    SiteStarted { site: String },
+    /// Site fetch is in progress
+    SiteFetching { site: String },
+    /// Site results are being parsed
+    SiteParsing { site: String },
+    /// Site search completed successfully
+    SiteCompleted { site: String, results_count: usize },
+    /// Site search failed
+    SiteFailed { site: String, error: String },
+    /// All searches are done
+    AllDone { total_results: usize },
+}
+
+/// Per-site progress status for TUI display
+#[derive(Debug, Clone)]
+pub struct SiteProgress {
+    pub site: String,
+    pub status: SiteStatus,
+    pub results_count: usize,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SiteStatus {
+    Pending,
+    Fetching,
+    Parsing,
+    Completed,
+    Failed,
+}
+
+impl SiteStatus {
+    fn emoji(&self) -> &'static str {
+        match self {
+            SiteStatus::Pending => "⏳",
+            SiteStatus::Fetching => "🔄",
+            SiteStatus::Parsing => "📄",
+            SiteStatus::Completed => "✅",
+            SiteStatus::Failed => "❌",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            SiteStatus::Pending => "Pending",
+            SiteStatus::Fetching => "Fetching",
+            SiteStatus::Parsing => "Parsing",
+            SiteStatus::Completed => "Done",
+            SiteStatus::Failed => "Failed",
+        }
+    }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum OutputFormat {
@@ -92,9 +153,17 @@ struct Cli {
     #[arg(long)]
     sites: Option<String>,
 
-    /// Print per-site debug info
+    /// Invert site selection (--sites a,b becomes "all except a,b")
+    #[arg(long, default_value_t = false)]
+    invert_sites: bool,
+
+    /// Print per-site debug info (enables debug-level logs)
     #[arg(long, default_value_t = false)]
     debug: bool,
+
+    /// Enable verbose output (shows info-level logs)
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
 
     /// Output format: json or table
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
@@ -130,14 +199,22 @@ struct Cli {
     /// Disable rate limiting between requests
     #[arg(long, default_value_t = false)]
     no_rate_limit: bool,
+
+    /// Show help for advanced search operators and exit
+    #[arg(long, default_value_t = false)]
+    help_operators: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize monitoring and tracing
-    monitoring::init_monitoring_with_json(matches!(cli.format, OutputFormat::Json))?;
+    // Initialize monitoring and tracing with appropriate log levels
+    monitoring::init_monitoring_with_levels(
+        matches!(cli.format, OutputFormat::Json),
+        cli.verbose,
+        cli.debug,
+    )?;
 
     // Cache file path - use platform-appropriate cache directory
     let cache_path = dirs::cache_dir()
@@ -153,6 +230,12 @@ async fn main() -> Result<()> {
         } else {
             println!("No cache to clear.");
         }
+        return Ok(());
+    }
+
+    // Handle --help-operators flag
+    if cli.help_operators {
+        println!("{}", operator_help());
         return Ok(());
     }
 
@@ -209,7 +292,14 @@ async fn main() -> Result<()> {
             }
         }
     };
-    let normalized = normalize_query(&query_value);
+    // Parse for advanced operators (site:, -exclude, "phrase", regex:) and multi-query (|)
+    let multi_query = MultiQuery::parse(&query_value);
+    // For cache key and backward compat, use first segment's normalized terms
+    let normalized = if let Some(first) = multi_query.first() {
+        first.get_search_terms()
+    } else {
+        normalize_query(&query_value)
+    };
 
     // Check cache first (unless disabled)
     if !cli.no_cache
@@ -323,10 +413,18 @@ async fn main() -> Result<()> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        all_sites
-            .into_iter()
-            .filter(|s| wanted.iter().any(|w| w.eq_ignore_ascii_case(&s.name)))
-            .collect()
+        // Apply invert logic: if --invert-sites, select all EXCEPT the listed sites
+        if cli.invert_sites {
+            all_sites
+                .into_iter()
+                .filter(|s| !wanted.iter().any(|w| w.eq_ignore_ascii_case(&s.name)))
+                .collect()
+        } else {
+            all_sites
+                .into_iter()
+                .filter(|s| wanted.iter().any(|w| w.eq_ignore_ascii_case(&s.name)))
+                .collect()
+        }
     } else if let Some(tokens) = interactive_selection {
         // Map tokens to unique site names by name or 1-based index
         let mut chosen: Vec<&str> = Vec::new();
@@ -370,15 +468,6 @@ async fn main() -> Result<()> {
         all_sites
     };
 
-    let client = build_http_client();
-    let semaphore = Arc::new(Semaphore::new(3));
-    let rate_limiter = if !cli.no_rate_limit {
-        Some(Arc::new(tokio::sync::Mutex::new(RateLimiter::new())))
-    } else {
-        None
-    };
-    let mut tasks = FuturesUnordered::new();
-
     // Build optional headers (Cookie) for forwarding
     let cookie_headers: Option<ReqHeaderMap> = if let Some(ref c) = cli.cookie {
         match HeaderValue::from_str(c) {
@@ -393,18 +482,76 @@ async fn main() -> Result<()> {
         None
     };
 
-    for site in selected_sites {
-        let permit = semaphore.clone().acquire_owned().await.unwrap();
-        let client = client.clone();
-        let query = normalized.clone();
-        let debug = cli.debug;
-        let use_cf = !cli.no_cf;
-        let cf_url = resolved_cf_url.clone();
-        let cookie_headers = cookie_headers.clone();
-        let rate_limiter = rate_limiter.clone(); // This is now Option<Arc<Mutex<RateLimiter>>>
+    // Determine if we should use interactive live TUI for search progress
+    let use_live_search_tui = cli.query.is_none()
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal()
+        && !cli.debug;
 
-        let no_playwright = cli.no_playwright;
-        tasks.push(tokio::spawn(async move {
+    // Run search - either with live TUI or standard progress output
+    let combined =
+        if use_live_search_tui {
+            // Interactive mode: use live search TUI with per-site progress
+            let rate_limiter = if !cli.no_rate_limit {
+                Some(Arc::new(tokio::sync::Mutex::new(RateLimiter::new())))
+            } else {
+                None
+            };
+
+            run_live_search_tui(
+                selected_sites,
+                &multi_query,
+                cli.limit,
+                cli.debug,
+                cli.no_cf,
+                resolved_cf_url.clone(),
+                cookie_headers.clone(),
+                cli.no_playwright,
+                rate_limiter,
+            )
+            .await?
+        } else {
+            // Non-interactive mode: use standard search with stderr progress
+            let client = build_http_client();
+            let semaphore = Arc::new(Semaphore::new(3));
+            let rate_limiter = if !cli.no_rate_limit {
+                Some(Arc::new(tokio::sync::Mutex::new(RateLimiter::new())))
+            } else {
+                None
+            };
+            let mut tasks = FuturesUnordered::new();
+
+            // Show search progress indicator if interactive
+            let show_progress = std::io::stderr().is_terminal() && !cli.debug;
+            let site_names: Vec<String> = selected_sites.iter().map(|s| s.name.clone()).collect();
+            let total_sites = site_names.len();
+            if show_progress {
+                eprintln!(
+                    "⏳ Searching {} sites: {}",
+                    total_sites,
+                    site_names.join(", ")
+                );
+            }
+
+            for site in selected_sites {
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                let client = client.clone();
+                // For multi-query: get site-specific search terms
+                let site_queries = multi_query.get_search_terms_for_site(&site.name);
+                let query = if site_queries.is_empty() {
+                    normalized.clone()
+                } else {
+                    site_queries.join(" ")
+                };
+                let debug = cli.debug;
+                let use_cf = !cli.no_cf;
+                let cf_url = resolved_cf_url.clone();
+                let cookie_headers = cookie_headers.clone();
+                let rate_limiter = rate_limiter.clone(); // This is now Option<Arc<Mutex<RateLimiter>>>
+
+                let no_playwright = cli.no_playwright;
+                let site_name = site.name.clone();
+                tasks.push(tokio::spawn(async move {
             let _permit = permit; // hold until task end
             let base_url = match site.search_kind {
                 SearchKind::ListingPage => site
@@ -695,20 +842,77 @@ async fn main() -> Result<()> {
             if !results.is_empty() {
                 results.truncate(cli.limit);
             }
-            results
+            // Return site name with results for progress tracking
+            (site_name, results)
         }));
-    }
+            }
 
-    let mut combined: Vec<SearchResult> = Vec::new();
-    while let Some(joined) = tasks.next().await {
-        if let Ok(mut site_results) = joined {
-            combined.append(&mut site_results);
+            let mut combined: Vec<SearchResult> = Vec::new();
+            let mut sites_completed = 0usize;
+            while let Some(joined) = tasks.next().await {
+                if let Ok((site_name, mut site_results)) = joined {
+                    sites_completed += 1;
+                    if show_progress {
+                        let emoji = if site_results.is_empty() {
+                            "⚪"
+                        } else {
+                            "✅"
+                        };
+                        eprint!(
+                            "\r{} {}/{} sites | {} {} results",
+                            emoji,
+                            sites_completed,
+                            total_sites,
+                            site_name,
+                            site_results.len()
+                        );
+                        // Pad with spaces to clear previous longer messages
+                        eprint!("                    ");
+                        use std::io::Write;
+                        let _ = std::io::stderr().flush();
+                    }
+                    combined.append(&mut site_results);
+                }
+            }
+            if show_progress {
+                eprintln!(); // Final newline after progress
+            }
+            combined
+        };
+
+    // Apply advanced query filtering (site:, -exclude, "phrase", regex: operators)
+    // For multi-query, filter per-site based on applicable segments
+    let mut combined = if multi_query.is_single() {
+        // Single query - use global filtering (backward compatible)
+        if let Some(first) = multi_query.first() {
+            filter_results(combined, first)
+        } else {
+            combined
         }
-    }
+    } else {
+        // Multi-query - filter per-site
+        let mut filtered = Vec::new();
+        let mut by_site: std::collections::HashMap<String, Vec<SearchResult>> =
+            std::collections::HashMap::new();
+        for r in combined {
+            by_site.entry(r.site.clone()).or_default().push(r);
+        }
+        for (site, results) in by_site {
+            let site_filtered = multi_query.filter_results_for_site(results, &site);
+            filtered.extend(site_filtered);
+        }
+        filtered
+    };
 
-    // Deduplicate by (site, url) then sort
-    combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.title.cmp(&b.title)));
+    // First: remove exact URL duplicates within each site
+    combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.url.cmp(&b.url)));
     combined.dedup_by(|a, b| a.site == b.site && a.url == b.url);
+
+    // Then: smart cross-site deduplication using title similarity
+    let mut combined = deduplicate_results(combined);
+
+    // Sort by site then title for final output
+    combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.title.cmp(&b.title)));
 
     // Apply overall cutoff if specified (0 means no cutoff)
     if cli.cutoff > 0 && combined.len() > cli.cutoff {
@@ -983,6 +1187,475 @@ fn open_url(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Live search TUI that shows per-site progress while search is running.
+/// Returns the combined results when search completes.
+async fn run_live_search_tui(
+    sites: Vec<SiteConfig>,
+    multi_query: &MultiQuery,
+    limit: usize,
+    _debug: bool, // prefixed with _ to avoid unused warning
+    no_cf: bool,
+    cf_url: String,
+    cookie_headers: Option<ReqHeaderMap>,
+    no_playwright: bool,
+    rate_limiter: Option<Arc<tokio::sync::Mutex<RateLimiter>>>,
+) -> anyhow::Result<Vec<SearchResult>> {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    // Setup terminal
+    let mut stdout = stdout();
+    execute!(stdout, terminal::EnterAlternateScreen)?;
+    terminal::enable_raw_mode()?;
+    let backend = ratatui::backend::CrosstermBackend::new(stdout);
+    let mut terminal = ratatui::Terminal::new(backend)?;
+
+    // Initialize progress state for all sites
+    let mut progress_map: HashMap<String, SiteProgress> = HashMap::new();
+    for site in &sites {
+        progress_map.insert(
+            site.name.clone(),
+            SiteProgress {
+                site: site.name.clone(),
+                status: SiteStatus::Pending,
+                results_count: 0,
+                message: None,
+            },
+        );
+    }
+
+    // Create channel for search events
+    let (event_tx, mut event_rx) = mpsc::channel::<SearchEvent>(100);
+
+    // Create channel for results
+    let (result_tx, mut result_rx) = mpsc::channel::<(String, Vec<SearchResult>)>(100);
+
+    // Pre-compute site-specific queries for multi-query support
+    let site_queries: std::collections::HashMap<String, String> = sites
+        .iter()
+        .map(|s| {
+            let site_terms = multi_query.get_search_terms_for_site(&s.name);
+            let query = if site_terms.is_empty() {
+                multi_query
+                    .first()
+                    .map(|f| f.get_search_terms())
+                    .unwrap_or_default()
+            } else {
+                site_terms.join(" ")
+            };
+            (s.name.clone(), query)
+        })
+        .collect();
+
+    // Spawn search task
+    let search_handle = {
+        let sites = sites.clone();
+        let site_queries = site_queries.clone();
+        let cf_url = cf_url.clone();
+        let cookie_headers = cookie_headers.clone();
+        let rate_limiter = rate_limiter.clone();
+        let event_tx = event_tx.clone();
+        let result_tx = result_tx.clone();
+
+        tokio::spawn(async move {
+            let client = build_http_client();
+            let semaphore = Arc::new(Semaphore::new(3));
+            let mut tasks = FuturesUnordered::new();
+
+            for site in sites {
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                let client = client.clone();
+                // Get site-specific query from pre-computed map
+                let query = site_queries.get(&site.name).cloned().unwrap_or_default();
+                let cf_url = cf_url.clone();
+                let cookie_headers = cookie_headers.clone();
+                let rate_limiter = rate_limiter.clone();
+                let event_tx = event_tx.clone();
+                let result_tx = result_tx.clone();
+                let use_cf = !no_cf;
+
+                tasks.push(tokio::spawn(async move {
+                    let _permit = permit;
+                    let site_name = site.name.clone();
+
+                    // Emit started event
+                    let _ = event_tx
+                        .send(SearchEvent::SiteStarted {
+                            site: site_name.clone(),
+                        })
+                        .await;
+
+                    // Emit fetching event
+                    let _ = event_tx
+                        .send(SearchEvent::SiteFetching {
+                            site: site_name.clone(),
+                        })
+                        .await;
+
+                    let base_url = match site.search_kind {
+                        SearchKind::ListingPage => site
+                            .listing_path
+                            .clone()
+                            .unwrap_or(site.base_url.clone())
+                            .to_string(),
+                        SearchKind::PhpBBSearch => build_search_url(&site, &query),
+                        _ => build_search_url(&site, &query),
+                    };
+
+                    let mut results: Vec<SearchResult> = Vec::new();
+                    let cf_local = cf_url.contains("127.0.0.1") || cf_url.contains("localhost");
+                    let non_default_cf = cf_url != "http://localhost:8191/v1";
+                    let prefer_solver = use_cf && (cf_local || non_default_cf);
+
+                    // Try Playwright for csrin first
+                    if site.name.eq_ignore_ascii_case("csrin") && !no_playwright && !prefer_solver {
+                        let cookie_val = cookie_headers
+                            .as_ref()
+                            .and_then(|h| h.get(COOKIE))
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+                        if let Some(html) = fetch_csrin_playwright_html(&query, cookie_val).await {
+                            let _ = event_tx
+                                .send(SearchEvent::SiteParsing {
+                                    site: site_name.clone(),
+                                })
+                                .await;
+                            results = parse_results(&site, &html, &query);
+                        }
+                    }
+
+                    if results.is_empty() {
+                        let allow_env = std::env::var("ALLOW_CSRIN_SOLVER")
+                            .ok()
+                            .map(|v| v == "1")
+                            .unwrap_or(false);
+                        let csrin_solver_allowed = site.name.eq_ignore_ascii_case("csrin")
+                            && (allow_env || cf_local || non_default_cf);
+                        let use_solver_for_this =
+                            use_cf && (site.requires_cloudflare || csrin_solver_allowed);
+
+                        let html = if use_solver_for_this {
+                            (if cookie_headers.is_some() {
+                                cf::fetch_via_solver_with_headers(
+                                    &client,
+                                    &base_url,
+                                    &cf_url,
+                                    cookie_headers.clone(),
+                                )
+                                .await
+                            } else {
+                                fetch_via_solver(&client, &base_url, &cf_url).await
+                            })
+                            .unwrap_or_default()
+                        } else {
+                            let rate_limiter_ref = if let Some(ref rl) = rate_limiter {
+                                Some(&mut *rl.lock().await)
+                            } else {
+                                None
+                            };
+
+                            (if cookie_headers.is_some() {
+                                fetcher::fetch_with_retry_headers(
+                                    &client,
+                                    &base_url,
+                                    cookie_headers.clone(),
+                                    rate_limiter_ref,
+                                    Some(site.name.as_str()),
+                                )
+                                .await
+                            } else {
+                                fetch_with_retry(
+                                    &client,
+                                    &base_url,
+                                    rate_limiter_ref,
+                                    Some(site.name.as_str()),
+                                )
+                                .await
+                            })
+                            .unwrap_or_default()
+                        };
+
+                        // Emit parsing event
+                        let _ = event_tx
+                            .send(SearchEvent::SiteParsing {
+                                site: site_name.clone(),
+                            })
+                            .await;
+                        results = parse_results(&site, &html, &query);
+                    }
+
+                    // Apply per-site filtering
+                    if site.name.eq_ignore_ascii_case("csrin") {
+                        let q_lower = query.to_lowercase();
+                        results.retain(|r| r.url.contains("viewtopic.php"));
+                        results.retain(|r| r.title.to_lowercase().contains(&q_lower));
+                    } else if !site.name.eq_ignore_ascii_case("csrin") {
+                        let q_lower = query.to_lowercase();
+                        if site.name.eq_ignore_ascii_case("fitgirl")
+                            || site.name.eq_ignore_ascii_case("fitgirl-repacks")
+                        {
+                            results.retain(|r| r.title.to_lowercase().contains(&q_lower));
+                        } else {
+                            let q_dash = q_lower.replace(' ', "-");
+                            let q_plus = q_lower.replace(' ', "+");
+                            let q_enc = q_lower.replace(' ', "%20");
+                            let q_strip = q_lower.replace(' ', "");
+                            results.retain(|r| {
+                                let tl = r.title.to_lowercase();
+                                let ul = r.url.to_lowercase();
+                                tl.contains(&q_lower)
+                                    || ul.contains(&q_lower)
+                                    || ul.contains(&q_dash)
+                                    || ul.contains(&q_plus)
+                                    || ul.contains(&q_enc)
+                                    || ul.contains(&q_strip)
+                            });
+                        }
+                    }
+
+                    // Normalize titles
+                    for r in &mut results {
+                        r.title = normalize_title(site.name.as_str(), &r.title);
+                    }
+
+                    if !results.is_empty() {
+                        results.truncate(limit);
+                    }
+
+                    // Emit completed event
+                    let _ = event_tx
+                        .send(SearchEvent::SiteCompleted {
+                            site: site_name.clone(),
+                            results_count: results.len(),
+                        })
+                        .await;
+
+                    // Send results
+                    let _ = result_tx.send((site_name, results)).await;
+                }));
+            }
+
+            // Wait for all tasks
+            while tasks.next().await.is_some() {}
+
+            // Signal completion - drop senders to close channels
+            drop(event_tx);
+            drop(result_tx);
+        })
+    };
+
+    // Drop our copy of senders so channels close when search is done
+    drop(event_tx);
+    drop(result_tx);
+
+    let total_sites = sites.len();
+    let mut completed_sites = 0usize;
+    let mut collected_results: Vec<SearchResult> = Vec::new();
+    let mut search_done = false;
+    let mut should_quit = false;
+
+    // Drain any pending keystrokes
+    while event::poll(Duration::from_millis(0))? {
+        let _ = event::read()?;
+    }
+
+    while !should_quit {
+        // Non-blocking poll for search events
+        loop {
+            match event_rx.try_recv() {
+                Ok(search_event) => match search_event {
+                    SearchEvent::SiteStarted { site } => {
+                        if let Some(p) = progress_map.get_mut(&site) {
+                            p.status = SiteStatus::Pending;
+                            p.message = Some("Starting...".to_string());
+                        }
+                    }
+                    SearchEvent::SiteFetching { site } => {
+                        if let Some(p) = progress_map.get_mut(&site) {
+                            p.status = SiteStatus::Fetching;
+                            p.message = Some("Fetching...".to_string());
+                        }
+                    }
+                    SearchEvent::SiteParsing { site } => {
+                        if let Some(p) = progress_map.get_mut(&site) {
+                            p.status = SiteStatus::Parsing;
+                            p.message = Some("Parsing...".to_string());
+                        }
+                    }
+                    SearchEvent::SiteCompleted {
+                        site,
+                        results_count,
+                    } => {
+                        if let Some(p) = progress_map.get_mut(&site) {
+                            p.status = SiteStatus::Completed;
+                            p.results_count = results_count;
+                            p.message = None;
+                        }
+                        completed_sites += 1;
+                    }
+                    SearchEvent::SiteFailed { site, error } => {
+                        if let Some(p) = progress_map.get_mut(&site) {
+                            p.status = SiteStatus::Failed;
+                            p.message = Some(error);
+                        }
+                        completed_sites += 1;
+                    }
+                    SearchEvent::AllDone { .. } => {
+                        search_done = true;
+                    }
+                },
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    search_done = true;
+                    break;
+                }
+            }
+        }
+
+        // Non-blocking poll for results
+        loop {
+            match result_rx.try_recv() {
+                Ok((_, mut results)) => {
+                    collected_results.append(&mut results);
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        // Check if search is complete
+        if completed_sites >= total_sites {
+            search_done = true;
+        }
+
+        // Draw UI
+        terminal.draw(|f| {
+            let area = f.area();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Title + progress bar
+                    Constraint::Min(1),    // Site list
+                    Constraint::Length(3), // Footer
+                ])
+                .split(area);
+
+            // Title and overall progress
+            let progress_ratio = if total_sites > 0 {
+                completed_sites as f64 / total_sites as f64
+            } else {
+                0.0
+            };
+            let title = format!(
+                " Searching {} sites | {} results found ",
+                total_sites,
+                collected_results.len()
+            );
+            let gauge = Gauge::default()
+                .block(Block::default().title(title).borders(Borders::ALL))
+                .gauge_style(Style::default().fg(Color::Cyan))
+                .ratio(progress_ratio)
+                .label(format!("{}/{} sites", completed_sites, total_sites));
+            f.render_widget(gauge, chunks[0]);
+
+            // Site progress list - sort by status before creating ListItems
+            let mut progress_vec: Vec<&SiteProgress> = progress_map.values().collect();
+            progress_vec.sort_by(|a, b| {
+                // Sort by status: Fetching/Parsing first, then Completed, then Pending/Failed
+                let get_order = |status: SiteStatus| match status {
+                    SiteStatus::Fetching | SiteStatus::Parsing => 0,
+                    SiteStatus::Completed => 1,
+                    SiteStatus::Pending => 2,
+                    SiteStatus::Failed => 3,
+                };
+                get_order(a.status).cmp(&get_order(b.status))
+            });
+
+            let progress_items: Vec<ListItem> = progress_vec
+                .iter()
+                .map(|p| {
+                    let emoji = p.status.emoji();
+                    let status_text = p.status.label();
+                    let count_text = if p.results_count > 0 {
+                        format!(" ({} results)", p.results_count)
+                    } else {
+                        String::new()
+                    };
+                    let msg = p.message.as_deref().unwrap_or("");
+                    let line = format!(
+                        "{} {} - {}{} {}",
+                        emoji, p.site, status_text, count_text, msg
+                    );
+                    ListItem::new(Line::from(line))
+                })
+                .collect();
+
+            let site_list = List::new(progress_items).block(
+                Block::default()
+                    .title(" Site Progress ")
+                    .borders(Borders::ALL),
+            );
+            f.render_widget(site_list, chunks[1]);
+
+            // Footer
+            let footer_text = if search_done {
+                "Search complete! Press Enter to view results, q to quit"
+            } else {
+                "Searching... Press q to cancel"
+            };
+            let footer = Paragraph::new(footer_text)
+                .block(Block::default().borders(Borders::ALL))
+                .style(Style::default().fg(if search_done {
+                    Color::Green
+                } else {
+                    Color::Yellow
+                }));
+            f.render_widget(footer, chunks[2]);
+        })?;
+
+        // Handle user input
+        if event::poll(Duration::from_millis(50))? {
+            match event::read()? {
+                event::Event::Key(k) => {
+                    if k.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match k.code {
+                        event::KeyCode::Char('q') | event::KeyCode::Esc => {
+                            should_quit = true;
+                            // Cancel search if still running
+                            search_handle.abort();
+                        }
+                        event::KeyCode::Enter if search_done => {
+                            should_quit = true;
+                        }
+                        _ => {}
+                    }
+                }
+                event::Event::Resize(_, _) => {}
+                _ => {}
+            }
+        }
+
+        // If search is done and user hasn't pressed a key, auto-continue after brief pause
+        if search_done && !should_quit {
+            // Give user a moment to see the completion state
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            should_quit = true;
+        }
+    }
+
+    // Restore terminal
+    terminal::disable_raw_mode()?;
+    crossterm::execute!(terminal.backend_mut(), terminal::LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    // Wait for search task to finish (it may already be done or aborted)
+    let _ = search_handle.await;
+
+    Ok(collected_results)
+}
+
 fn filter_results_by_query_strict(results: &mut Vec<SearchResult>, query: &str) {
     let ql = query.to_lowercase();
     let ql_dash = ql.replace(' ', "-");
@@ -1233,6 +1906,61 @@ async fn fetch_csrin_feed(
     }
 }
 
+/// Resolve the csrin_search.cjs script path with fallback search order:
+/// 1. CSRIN_SCRIPT_PATH env override
+/// 2. Executable's directory + scripts/csrin_search.cjs
+/// 3. Relative paths from CWD
+fn resolve_csrin_script_path() -> Option<std::path::PathBuf> {
+    // 1. Environment variable override
+    if let Ok(env_path) = std::env::var("CSRIN_SCRIPT_PATH") {
+        let p = std::path::PathBuf::from(&env_path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Executable's directory + scripts/csrin_search.cjs
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            // Try scripts/ subdirectory (installed location)
+            let script_in_exe_scripts = exe_dir.join("scripts").join("csrin_search.cjs");
+            if script_in_exe_scripts.exists() {
+                return Some(script_in_exe_scripts);
+            }
+            // Try alongside executable
+            let script_beside_exe = exe_dir.join("csrin_search.cjs");
+            if script_beside_exe.exists() {
+                return Some(script_beside_exe);
+            }
+            // For development: go up to project root from target/debug/
+            if let Some(parent) = exe_dir.parent() {
+                if let Some(grandparent) = parent.parent() {
+                    let dev_script = grandparent.join("scripts").join("csrin_search.cjs");
+                    if dev_script.exists() {
+                        return Some(dev_script);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Relative paths from current working directory
+    let relative_paths = [
+        "../../scripts/csrin_search.cjs",
+        "../scripts/csrin_search.cjs",
+        "./scripts/csrin_search.cjs",
+        "scripts/csrin_search.cjs",
+    ];
+    for rel_path in relative_paths {
+        let p = std::path::PathBuf::from(rel_path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    None
+}
+
 // Spawn Node + Playwright helper to fetch rendered HTML for cs.rin search
 async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Option<String> {
     // Test/CI fast path: if CS_PLAYWRIGHT_HTML is provided, return it without spawning Node
@@ -1241,9 +1969,12 @@ async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Opt
     {
         return Some(fake);
     }
-    let script = "../../scripts/csrin_search.cjs";
+
+    // Resolve script path with fallback order
+    let script_path = resolve_csrin_script_path()?;
+
     let mut cmd = Command::new("node");
-    cmd.arg(script).arg(query);
+    cmd.arg(&script_path).arg(query);
     if let Some(c) = cookie {
         cmd.env("PLAYWRIGHT_COOKIE", c);
     }

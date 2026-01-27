@@ -44,9 +44,33 @@ cargo tauri dev
 ### Search
 
 1. Enter a game name in the search bar
-2. Select sites (or leave on "All")
+2. Select sites (or leave on "All" for all sites)
 3. Press Enter or click Search
-4. Results appear grouped by site
+4. Results appear grouped by site, sorted alphabetically
+
+### Multi-Query Syntax
+
+Use pipe (`|`) separator for different searches on different sites:
+
+```
+elden ring site:fitgirl | minecraft site:csrin
+```
+
+- Each segment is parsed independently
+- Sites not mentioned in any segment search ALL segments without site restrictions
+
+### Site Selection
+
+- **Invert Selection**: Click "⇆ Invert" button to flip site selection
+  - If no sites selected: selects all sites
+  - If some sites selected: inverts the selection (selects unselected, deselects selected)
+- **Empty selection**: Searches all sites by default
+
+### Results Display
+
+- Results grouped by site (sorted A→Z by site name)
+- Items within each group sorted A→Z by title
+- Click any URL to copy it to clipboard
 
 ### Link Handling
 
@@ -74,6 +98,24 @@ The GUI caches recent searches for instant retrieval:
   - Adjust cache size (3-20 searches)
   - Clear all cached searches
 - **Persistence**: Cache persists across sessions via localStorage
+
+### Logging Controls
+
+Control log output with toggles in the search options:
+
+| Toggle    | Effect                                              |
+| --------- | --------------------------------------------------- |
+| `verbose` | Shows info-level logs in console                    |
+| `debug`   | Shows debug-level logs (more detailed than verbose) |
+
+**Environment variable override:**
+
+```bash
+# Set log level before launching GUI
+LOG_LEVEL=debug website-searcher-gui
+```
+
+Valid values: `error` (default in release), `warn`, `info`/`verbose`, `debug`
 
 ## Configuration
 

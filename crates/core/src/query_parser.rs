@@ -5,9 +5,135 @@
 //! - `-term` - Exclude results containing term
 //! - `"exact phrase"` - Require exact phrase match
 //! - `regex:pattern` - Match using regex (advanced)
+//! - `|` - Separate multiple query segments (pipe-separated multi-query)
 
 use crate::models::SearchResult;
 use regex::Regex;
+
+/// Multi-query container for pipe-separated queries
+/// Each segment can have its own site restrictions
+#[derive(Debug, Clone, Default)]
+pub struct MultiQuery {
+    /// Individual query segments (split by |)
+    pub segments: Vec<AdvancedQuery>,
+    /// Original raw query
+    pub raw_query: String,
+}
+
+impl MultiQuery {
+    /// Parse a multi-query string (pipe-separated segments)
+    pub fn parse(input: &str) -> Self {
+        let raw_query = input.to_string();
+        let segments: Vec<AdvancedQuery> = input
+            .split('|')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(AdvancedQuery::parse)
+            .collect();
+
+        // If no segments, create one from the full input
+        let segments = if segments.is_empty() {
+            vec![AdvancedQuery::parse(input)]
+        } else {
+            segments
+        };
+
+        MultiQuery {
+            segments,
+            raw_query,
+        }
+    }
+
+    /// Check if this is a simple single-segment query
+    pub fn is_single(&self) -> bool {
+        self.segments.len() <= 1
+    }
+
+    /// Get all unique site restrictions across all segments
+    pub fn all_site_restrictions(&self) -> Vec<String> {
+        let mut sites: Vec<String> = self
+            .segments
+            .iter()
+            .flat_map(|s| s.site_restrictions.clone())
+            .collect();
+        sites.sort();
+        sites.dedup();
+        sites
+    }
+
+    /// Get segments that apply to a specific site
+    /// Returns segments that either:
+    /// 1. Have no site restrictions (apply to all sites)
+    /// 2. Explicitly include this site in their site: restrictions
+    pub fn segments_for_site(&self, site_name: &str) -> Vec<&AdvancedQuery> {
+        let site_lower = site_name.to_lowercase();
+
+        // Check if this site is explicitly mentioned in ANY segment
+        let site_mentioned_anywhere = self.segments.iter().any(|seg| {
+            seg.site_restrictions
+                .iter()
+                .any(|s| site_lower.contains(s) || s.contains(&site_lower))
+        });
+
+        self.segments
+            .iter()
+            .filter(|seg| {
+                if seg.site_restrictions.is_empty() {
+                    // Segment has no site restriction - applies to all sites
+                    true
+                } else {
+                    // Segment has site restrictions - check if this site matches
+                    seg.site_restrictions
+                        .iter()
+                        .any(|s| site_lower.contains(s) || s.contains(&site_lower))
+                }
+            })
+            .collect()
+    }
+
+    /// Get the combined search terms for a specific site (for URL building)
+    /// Returns terms from all applicable segments
+    pub fn get_search_terms_for_site(&self, site_name: &str) -> Vec<String> {
+        self.segments_for_site(site_name)
+            .iter()
+            .map(|seg| seg.get_search_terms())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// Filter results for a specific site using applicable segments
+    pub fn filter_results_for_site(
+        &self,
+        results: Vec<SearchResult>,
+        site_name: &str,
+    ) -> Vec<SearchResult> {
+        let applicable_segments = self.segments_for_site(site_name);
+
+        if applicable_segments.is_empty() {
+            return results;
+        }
+
+        // A result matches if it matches ANY applicable segment
+        results
+            .into_iter()
+            .filter(|result| {
+                applicable_segments
+                    .iter()
+                    .any(|seg| seg.matches_result(result))
+            })
+            .collect()
+    }
+
+    /// Check if the multi-query is empty
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty() || self.segments.iter().all(|s| s.is_empty())
+    }
+
+    /// Get the first segment (for backward compatibility)
+    pub fn first(&self) -> Option<&AdvancedQuery> {
+        self.segments.first()
+    }
+}
 
 /// Parsed advanced query with operator support
 #[derive(Debug, Clone, Default)]
@@ -58,10 +184,16 @@ impl AdvancedQuery {
                 continue;
             }
 
-            // Site restriction: site:name
+            // Site restriction: site:name or site:name1,name2,name3
             if let Some(site) = token.strip_prefix("site:") {
                 if !site.is_empty() {
-                    query.site_restrictions.push(site.to_lowercase());
+                    // Support comma-separated sites: site:fitgirl,dodi,elamigos
+                    for s in site.split(',') {
+                        let s = s.trim();
+                        if !s.is_empty() {
+                            query.site_restrictions.push(s.to_lowercase());
+                        }
+                    }
                 }
                 continue;
             }
@@ -198,12 +330,22 @@ pub fn operator_help() -> &'static str {
   -term         Exclude results containing term (e.g., -deluxe)
   "phrase"      Require exact phrase match (e.g., "elden ring")
   regex:pattern Match using regex (e.g., regex:v[0-9]+)
+  |             Separate multiple queries (each can have own site: filter)
 
 Examples:
   elden ring site:fitgirl
   elden ring -deluxe -edition
   "elden ring" site:dodi
-  cyberpunk regex:v[0-9]+\.[0-9]+"#
+  cyberpunk regex:v[0-9]+\.[0-9]+
+
+Multi-Query Examples:
+  elden ring site:fitgirl | minecraft site:csrin
+    - Searches fitgirl for "elden ring" AND csrin for "minecraft"
+  
+  elden ring -nightreign site:fitgirl,dodi | minecraft site:elamigos,csrin
+    - Searches fitgirl,dodi for "elden ring" (excluding nightreign)
+    - Searches elamigos,csrin for "minecraft"
+    - Unmentioned sites search for BOTH queries"#
 }
 
 #[cfg(test)]
@@ -238,6 +380,20 @@ mod tests {
     fn test_parse_multiple_sites() {
         let query = AdvancedQuery::parse("elden ring site:fitgirl site:dodi");
         assert_eq!(query.site_restrictions, vec!["fitgirl", "dodi"]);
+    }
+
+    #[test]
+    fn test_parse_comma_separated_sites() {
+        let query = AdvancedQuery::parse("minecraft site:fitgirl,dodi,elamigos");
+        assert_eq!(query.terms, vec!["minecraft"]);
+        assert_eq!(query.site_restrictions, vec!["fitgirl", "dodi", "elamigos"]);
+    }
+
+    #[test]
+    fn test_parse_comma_and_separate_sites() {
+        // Mix of comma-separated and separate site: operators
+        let query = AdvancedQuery::parse("game site:fitgirl,dodi site:steamrip");
+        assert_eq!(query.site_restrictions, vec!["fitgirl", "dodi", "steamrip"]);
     }
 
     #[test]
@@ -448,5 +604,112 @@ mod tests {
         let query = AdvancedQuery::parse("game -deluxe");
         let result = make_result("fitgirl", "Game", "https://example.com/deluxe-edition");
         assert!(!query.matches_result(&result));
+    }
+
+    // MultiQuery tests
+    #[test]
+    fn test_multi_query_single_segment() {
+        let mq = MultiQuery::parse("elden ring site:fitgirl");
+        assert!(mq.is_single());
+        assert_eq!(mq.segments.len(), 1);
+        assert_eq!(mq.segments[0].terms, vec!["elden", "ring"]);
+    }
+
+    #[test]
+    fn test_multi_query_two_segments() {
+        let mq = MultiQuery::parse("elden ring site:fitgirl | minecraft site:csrin");
+        assert!(!mq.is_single());
+        assert_eq!(mq.segments.len(), 2);
+        assert_eq!(mq.segments[0].terms, vec!["elden", "ring"]);
+        assert_eq!(mq.segments[0].site_restrictions, vec!["fitgirl"]);
+        assert_eq!(mq.segments[1].terms, vec!["minecraft"]);
+        assert_eq!(mq.segments[1].site_restrictions, vec!["csrin"]);
+    }
+
+    #[test]
+    fn test_multi_query_segments_for_site() {
+        let mq = MultiQuery::parse("elden ring site:fitgirl | minecraft site:csrin | cyberpunk");
+
+        // fitgirl should get "elden ring" segment + "cyberpunk" (no site restriction)
+        let fitgirl_segs = mq.segments_for_site("fitgirl");
+        assert_eq!(fitgirl_segs.len(), 2);
+
+        // csrin should get "minecraft" segment + "cyberpunk" (no site restriction)
+        let csrin_segs = mq.segments_for_site("csrin");
+        assert_eq!(csrin_segs.len(), 2);
+
+        // dodi is not mentioned, so gets only "cyberpunk" (no site restriction)
+        let dodi_segs = mq.segments_for_site("dodi");
+        assert_eq!(dodi_segs.len(), 1);
+        assert_eq!(dodi_segs[0].terms, vec!["cyberpunk"]);
+    }
+
+    #[test]
+    fn test_multi_query_search_terms_for_site() {
+        let mq = MultiQuery::parse("elden ring site:fitgirl | minecraft site:csrin");
+
+        let fitgirl_terms = mq.get_search_terms_for_site("fitgirl");
+        assert_eq!(fitgirl_terms, vec!["elden ring"]);
+
+        let csrin_terms = mq.get_search_terms_for_site("csrin");
+        assert_eq!(csrin_terms, vec!["minecraft"]);
+    }
+
+    #[test]
+    fn test_multi_query_unspecified_site_gets_all() {
+        let mq = MultiQuery::parse("elden ring | minecraft");
+
+        // Both segments have no site restrictions, so any site gets both
+        let any_site_segs = mq.segments_for_site("steamrip");
+        assert_eq!(any_site_segs.len(), 2);
+
+        let terms = mq.get_search_terms_for_site("steamrip");
+        assert!(terms.contains(&"elden ring".to_string()));
+        assert!(terms.contains(&"minecraft".to_string()));
+    }
+
+    #[test]
+    fn test_multi_query_filter_results() {
+        let mq = MultiQuery::parse("elden ring site:fitgirl | minecraft site:csrin");
+
+        let results = vec![
+            make_result("fitgirl", "Elden Ring", "https://f.com/1"),
+            make_result("fitgirl", "Minecraft", "https://f.com/2"),
+            make_result("csrin", "Elden Ring", "https://c.com/1"),
+            make_result("csrin", "Minecraft", "https://c.com/2"),
+        ];
+
+        // For fitgirl, only "elden ring" segment applies
+        let fitgirl_filtered = mq.filter_results_for_site(results.clone(), "fitgirl");
+        assert_eq!(fitgirl_filtered.len(), 1);
+        assert!(fitgirl_filtered[0].title.contains("Elden Ring"));
+
+        // For csrin, only "minecraft" segment applies
+        let csrin_filtered = mq.filter_results_for_site(results, "csrin");
+        assert_eq!(csrin_filtered.len(), 1);
+        assert!(csrin_filtered[0].title.contains("Minecraft"));
+    }
+
+    #[test]
+    fn test_multi_query_all_site_restrictions() {
+        let mq = MultiQuery::parse("elden ring site:fitgirl,dodi | minecraft site:csrin,elamigos");
+        let all_sites = mq.all_site_restrictions();
+        assert!(all_sites.contains(&"fitgirl".to_string()));
+        assert!(all_sites.contains(&"dodi".to_string()));
+        assert!(all_sites.contains(&"csrin".to_string()));
+        assert!(all_sites.contains(&"elamigos".to_string()));
+    }
+
+    #[test]
+    fn test_multi_query_empty() {
+        let mq = MultiQuery::parse("");
+        assert!(mq.is_empty());
+    }
+
+    #[test]
+    fn test_multi_query_operator_help_contains_pipe() {
+        let help = operator_help();
+        assert!(help.contains("|"));
+        assert!(help.contains("Multi-Query"));
     }
 }

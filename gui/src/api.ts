@@ -12,6 +12,7 @@ export type SearchArgs = {
   cutoff?: number
   sites?: string[]
   debug?: boolean
+  verbose?: boolean
   no_cf?: boolean
   cf_url?: string
   cookie?: string
@@ -66,4 +67,31 @@ export async function getCacheSettings(): Promise<number> {
 
 export async function setCacheSize(size: number): Promise<void> {
   await invoke('set_cache_size', { size })
+}
+
+// Streaming search types
+export type SearchProgress = {
+  site: string
+  status: 'pending' | 'fetching' | 'parsing' | 'completed' | 'failed'
+  results_count: number
+  message?: string
+}
+
+export type StreamedResult = {
+  site: string
+  result: SearchResult
+}
+
+export type SearchComplete = {
+  total_results: number
+  sites_completed: number
+  sites_failed: number
+}
+
+// Streaming search invocation (use with event listeners)
+export async function invokeSearchStreaming(args: SearchArgs): Promise<SearchResult[]> {
+  if (!args.query || !args.query.trim()) {
+    throw new Error('Query is required')
+  }
+  return await invoke<SearchResult[]>('search_gui_streaming', { args })
 }

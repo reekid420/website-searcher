@@ -108,7 +108,7 @@ jobs:
 
           # List built packages
           ls -la *.pkg.tar.zst || true
-
+          rm -f *debug*.pkg.tar.zst
       - name: Rename and stage artifact
         run: |
           VERSION="${{ inputs.version || '1.0.0' }}"

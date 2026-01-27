@@ -1,7 +1,12 @@
 use crate::models::{SearchKind, SiteConfig};
+use crate::query_parser::AdvancedQuery;
 
+/// Normalize query for URL building.
+/// This function strips advanced operators (site:, -term, "phrase", regex:)
+/// and returns only the actual search terms to be sent to websites.
 pub fn normalize_query(input: &str) -> String {
-    input.split_whitespace().collect::<Vec<_>>().join(" ")
+    let advanced = AdvancedQuery::parse(input);
+    advanced.get_search_terms()
 }
 
 pub fn build_search_url(site: &SiteConfig, query: &str) -> String {
@@ -44,6 +49,39 @@ mod tests {
         assert_eq!(normalize_query("\t\t"), "");
         assert_eq!(normalize_query("a\t\tb"), "a b");
         assert_eq!(normalize_query(" a \n b \r\n c "), "a b c");
+    }
+
+    #[test]
+    fn normalize_strips_site_operator() {
+        assert_eq!(normalize_query("elden ring site:fitgirl"), "elden ring");
+        assert_eq!(normalize_query("game site:dodi site:fitgirl"), "game");
+    }
+
+    #[test]
+    fn normalize_strips_exclude_operator() {
+        assert_eq!(normalize_query("elden ring -deluxe"), "elden ring");
+        assert_eq!(normalize_query("cyberpunk -gog -dlc"), "cyberpunk");
+    }
+
+    #[test]
+    fn normalize_preserves_exact_phrases() {
+        // Exact phrases should be preserved as search terms
+        let result = normalize_query("\"elden ring\" dlc");
+        assert!(result.contains("elden ring"));
+        assert!(result.contains("dlc"));
+    }
+
+    #[test]
+    fn normalize_strips_regex_operator() {
+        assert_eq!(normalize_query("game regex:v[0-9]+"), "game");
+    }
+
+    #[test]
+    fn normalize_handles_complex_query() {
+        assert_eq!(
+            normalize_query("elden ring site:fitgirl -deluxe -gog"),
+            "elden ring"
+        );
     }
 
     #[test]

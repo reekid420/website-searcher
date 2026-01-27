@@ -36,8 +36,10 @@ websearcher [OPTIONS] [QUERY]
 | ------------------------ | ------------------------------------------------- | -------------------------- |
 | `--limit <N>`            | Maximum results per site                          | 10                         |
 | `--sites <a,b,c>`        | Restrict to specific sites (comma-separated)      | all                        |
+| `--invert-sites`         | Invert site selection (search all EXCEPT listed)  | off                        |
 | `--format <json\|table>` | Output format                                     | json                       |
 | `--json`                 | Alias for `--format json`                         | json                       |
+| `-v, --verbose`          | Enable info-level logging                         | off                        |
 | `--debug`                | Print diagnostics, write HTML samples to `debug/` | off                        |
 | `--no-cf`                | Disable Cloudflare solver                         | CF enabled                 |
 | `--cf_url <URL>`         | Override FlareSolverr endpoint                    | `http://localhost:8191/v1` |
@@ -59,7 +61,23 @@ websearcher
 
 1. Enter search phrase when prompted
 2. Select sites (type `all` or comma-separated names/numbers)
-3. Results display in table format
+3. **Live progress TUI** displays per-site status in real-time
+4. Results display in navigable TUI when search completes
+
+### Live Search Progress
+
+In interactive mode, a real-time progress display shows:
+
+- Per-site status with emoji indicators:
+  - `⏳` Pending - Site queued for search
+  - `🔄` Fetching - HTTP request in progress
+  - `📄` Parsing - Extracting results from HTML
+  - `✅` Completed - Site finished with result count
+  - `❌` Failed - Site encountered an error
+- Overall progress bar showing sites completed
+- Total results found so far
+
+The progress TUI automatically transitions to the results browser when all sites complete.
 
 ## Output Formats
 
@@ -106,21 +124,41 @@ websearcher "cyberpunk" --limit 2 --format table
 
 Table output automatically launches a TUI when running interactively:
 
-### Keybindings
+### Search Progress TUI
 
-| Key         | Action                         |
-| ----------- | ------------------------------ |
-| `↑` / `k`   | Move selection up              |
-| `↓` / `j`   | Move selection down            |
-| `Enter`     | Open selected URL in browser   |
-| `c`         | Copy selected URL to clipboard |
-| `q` / `Esc` | Quit TUI                       |
+During the search phase:
+
+| Key         | Action                      |
+| ----------- | --------------------------- |
+| `q` / `Esc` | Cancel search and quit      |
+| `Enter`     | View results (when done)    |
+
+The progress display shows:
+- Gauge showing overall completion percentage
+- List of all sites with their current status
+- Running count of total results found
+
+### Results Browser TUI
+
+After search completes:
+
+| Key           | Action                         |
+| ------------- | ------------------------------ |
+| `↑` / `k`     | Move selection up              |
+| `↓` / `j`     | Move selection down            |
+| `PgUp`        | Scroll up 10 rows              |
+| `PgDn`        | Scroll down 10 rows            |
+| `Home`        | Jump to top                    |
+| `End`         | Jump to bottom                 |
+| `Enter` / `o` | Open selected URL in browser   |
+| `q` / `Esc`   | Quit TUI                       |
 
 ### Navigation
 
-- Results are grouped by site
+- Results are grouped by site in bordered boxes
 - Use arrow keys to navigate between results
 - Terminal resizing updates layout automatically
+- Selected URL is shown in footer
 
 ## Cloudflare Handling
 
@@ -211,15 +249,29 @@ Metrics include:
 
 ### Logging
 
-Structured logging provides detailed operation information:
+Structured logging with configurable verbosity:
 
 ```bash
-# JSON output suppresses verbose logging
-websearcher "query" --format json
+# Default: error-level logging only
+websearcher "query"
 
-# Table output includes full logs
-websearcher "query" --format table
+# Verbose: info-level logging
+websearcher "query" --verbose
+
+# Debug: debug-level logging (most detailed)
+websearcher "query" --debug
+
+# JSON output always uses error-level only (clean output)
+websearcher "query" --format json
 ```
+
+**Log levels:**
+
+| Flag        | Level | Description                            |
+| ----------- | ----- | -------------------------------------- |
+| (default)   | Error | Only errors shown                      |
+| `--verbose` | Info  | General operation info + errors        |
+| `--debug`   | Debug | Detailed diagnostics + info + errors   |
 
 ### Environment Variables
 
@@ -234,6 +286,44 @@ websearcher "query" --format table
 | `csrin`      | Uses Playwright by default; `CSRIN_PAGES` controls depth  |
 | `ankergames` | Uses path-encoded search; falls back to listing page      |
 | `f95zone`    | Browse-only (search requires auth); parses forum listings |
+
+## Multi-Query Syntax
+
+Use the pipe (`|`) separator to search different games on different sites simultaneously:
+
+```bash
+# Search fitgirl for "elden ring" AND csrin for "minecraft"
+websearcher "elden ring site:fitgirl | minecraft site:csrin"
+
+# Complex multi-query with exclusions
+websearcher "elden ring -nightreign site:fitgirl,dodi | minecraft site:elamigos,csrin"
+```
+
+**Multi-query behavior:**
+
+- Each segment (separated by `|`) is parsed independently
+- Segments with `site:` restrictions apply only to those sites
+- Segments without `site:` restrictions apply to ALL sites
+- Sites not explicitly mentioned in any segment search for ALL segments without site restrictions
+
+**Example:**
+```bash
+websearcher "elden ring site:fitgirl | minecraft site:csrin | cyberpunk"
+```
+- `fitgirl` searches for "elden ring" AND "cyberpunk"
+- `csrin` searches for "minecraft" AND "cyberpunk"
+- Other sites search only for "cyberpunk"
+
+## Invert Site Selection
+
+The `--invert-sites` flag inverts the site selection:
+
+```bash
+# Search all sites EXCEPT fitgirl and dodi
+websearcher "elden ring" --sites fitgirl,dodi --invert-sites
+
+# Equivalent to: search all sites minus the listed ones
+```
 
 ## Examples
 
@@ -255,6 +345,15 @@ CSRIN_PAGES=3 websearcher "elden ring" --sites csrin --format table
 
 # Interactive mode
 websearcher
+
+# Verbose logging
+websearcher "elden ring" --verbose
+
+# Multi-query: different games on different sites
+websearcher "elden ring site:fitgirl | minecraft site:csrin"
+
+# Invert site selection: search all EXCEPT fitgirl
+websearcher "elden ring" --sites fitgirl --invert-sites
 ```
 
 ## Exit Codes

@@ -13,10 +13,23 @@ import {
   getCacheSettings,
   setCacheSize as apiSetCacheSize
 } from './api'
+import { useRealtimeSearch, type SiteProgress } from './hooks/useRealtimeSearch'
 
 // Cache configuration constants
 const MIN_CACHE_SIZE = 3
 const MAX_CACHE_SIZE = 20
+
+// Status emoji helper
+const getStatusEmoji = (status: SiteProgress['status']) => {
+  switch (status) {
+    case 'pending': return '⏳'
+    case 'fetching': return '🔄'
+    case 'parsing': return '📄'
+    case 'completed': return '✅'
+    case 'failed': return '❌'
+    default: return '⏳'
+  }
+}
 
 function App() {
   const [q, setQ] = useState('')
@@ -35,7 +48,12 @@ function App() {
   const [noPlaywright, setNoPlaywright] = useState<boolean>(false)
   const [noRateLimit, setNoRateLimit] = useState<boolean>(false)
   const [debug, setDebug] = useState<boolean>(false)
+  const [verbose, setVerbose] = useState<boolean>(false)
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
+  const [useStreaming, setUseStreaming] = useState<boolean>(true) // Default to streaming
+
+  // Streaming search hook
+  const streaming = useRealtimeSearch()
 
   // Cache state (now from Tauri backend)
   const [cache, setCache] = useState<CacheEntry[]>([])
@@ -69,18 +87,34 @@ function App() {
     }
   }, [])
 
-  // Group results by site
+  // Consolidated display state (use streaming hook or local state based on mode)
+  const displayResults = useStreaming ? streaming.results : results
+  const isLoading = useStreaming ? streaming.isSearching : loading
+  const displayError = useStreaming ? streaming.error : error
+
+  // Group results by site (use displayResults for streaming support)
+  // Sorted by site name (A→Z), then items by title (A→Z)
   const groupedResults = useMemo(() => {
     const groups = new Map<string, { site: string; items: { title: string; url: string }[] }>()
-    for (const r of results) {
+    for (const r of displayResults) {
       const key = r.site.toLowerCase()
       if (!groups.has(key)) {
         groups.set(key, { site: r.site, items: [] })
       }
       groups.get(key)!.items.push({ title: r.title, url: r.url })
     }
-    return Array.from(groups.values())
-  }, [results])
+    // Sort groups by site name (A→Z)
+    const sortedGroups = Array.from(groups.values()).sort((a, b) => 
+      a.site.toLowerCase().localeCompare(b.site.toLowerCase())
+    )
+    // Sort items within each group by title (A→Z)
+    for (const group of sortedGroups) {
+      group.items.sort((a, b) => 
+        a.title.toLowerCase().localeCompare(b.title.toLowerCase())
+      )
+    }
+    return sortedGroups
+  }, [displayResults])
 
   // Load site list once
   useEffect(() => {
@@ -142,7 +176,7 @@ function App() {
       return
     }
 
-    // Check cache first
+    // Check cache first (for both modes)
     try {
       const cached = await getCachedResults(q)
       if (cached) {
@@ -156,37 +190,55 @@ function App() {
       console.error('Cache lookup failed:', e)
     }
 
-    setLoading(true)
-    try {
-      const rs = await invokeSearch({
-        query: q,
-        limit,
-        cutoff: cutoff || undefined,
-        sites: selectedSites.length ? selectedSites : undefined,
-        debug,
-        no_cf: noCf,
-        cf_url: cfUrl || undefined,
-        cookie: cookie || undefined,
-        csrin_pages: csrinPages,
-        csrin_search: csrinSearch,
-        no_playwright: noPlaywright,
-        no_rate_limit: noRateLimit,
-      })
-      setResults(rs)
-      // Add to cache if we got results
-      if (rs.length > 0) {
-        try {
-          await addToCache(q, rs)
+    const searchArgs = {
+      query: q,
+      limit,
+      cutoff: cutoff || undefined,
+      sites: selectedSites.length ? selectedSites : undefined,
+      debug,
+      verbose,
+      no_cf: noCf,
+      cf_url: cfUrl || undefined,
+      cookie: cookie || undefined,
+      csrin_pages: csrinPages,
+      csrin_search: csrinSearch,
+      no_playwright: noPlaywright,
+      no_rate_limit: noRateLimit,
+    }
+
+    if (useStreaming) {
+      // Use streaming mode - results update in real-time via hook
+      setResults([]) // Clear previous results
+      try {
+        await streaming.startSearch(searchArgs)
+        // After streaming completes, cache the results
+        if (streaming.results.length > 0) {
+          await addToCache(q, streaming.results)
           await reloadCache()
-        } catch (e) {
-          console.error('Failed to cache results:', e)
         }
+      } catch (e) {
+        setError((e as Error).message)
       }
-      console.log('results', rs)
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setLoading(false)
+    } else {
+      // Traditional mode - wait for all results
+      setLoading(true)
+      try {
+        const rs = await invokeSearch(searchArgs)
+        setResults(rs)
+        if (rs.length > 0) {
+          try {
+            await addToCache(q, rs)
+            await reloadCache()
+          } catch (e) {
+            console.error('Failed to cache results:', e)
+          }
+        }
+        console.log('results', rs)
+      } catch (e) {
+        setError((e as Error).message)
+      } finally {
+        setLoading(false)
+      }
     }
   }
 
@@ -299,9 +351,43 @@ function App() {
           style={{ flex: 1, padding: 8 }}
           onKeyDown={(e) => e.key === 'Enter' && onSearch()}
         />
-        <button onClick={onSearch} disabled={loading}>
-          {loading ? 'Searching…' : 'Search'}
+        <button onClick={onSearch} disabled={isLoading}>
+          {isLoading ? 'Searching…' : 'Search'}
         </button>
+      </div>
+
+      {/* Streaming mode toggle and progress */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <input
+            type="checkbox"
+            checked={useStreaming}
+            onChange={(e) => setUseStreaming(e.target.checked)}
+          />
+          Real-time streaming
+        </label>
+        {useStreaming && streaming.progress.size > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {Array.from(streaming.progress.entries()).map(([siteName, prog]) => (
+              <span
+                key={siteName}
+                style={{
+                  padding: '2px 8px',
+                  fontSize: 12,
+                  borderRadius: 12,
+                  background: prog.status === 'completed' ? '#2d5a2d' :
+                              prog.status === 'failed' ? '#5a2d2d' : '#3a3a3a',
+                  color: prog.status === 'completed' ? '#8f8' :
+                         prog.status === 'failed' ? '#f88' : '#ccc',
+                }}
+                title={prog.message || prog.status}
+              >
+                {getStatusEmoji(prog.status)} {siteName}
+                {prog.status === 'completed' && ` (${prog.resultsCount})`}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Cache hit indicator */}
@@ -320,7 +406,26 @@ function App() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div>
-          <label>Sites</label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <label>Sites</label>
+            <button
+              onClick={() => {
+                // Invert selection: toggle between "none selected" and "all selected except current"
+                if (selectedSites.length === 0) {
+                  // None selected - select all
+                  setSelectedSites([...siteOptions])
+                } else {
+                  // Some selected - invert (select those not currently selected)
+                  const inverted = siteOptions.filter(s => !selectedSites.includes(s))
+                  setSelectedSites(inverted)
+                }
+              }}
+              style={{ padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}
+              title="Invert site selection (select all not currently selected)"
+            >
+              ⇆ Invert
+            </button>
+          </div>
           <div style={{ border: '1px solid #444', padding: 8, maxHeight: 160, overflow: 'auto' }}>
             {siteOptions.map((s) => {
               const checked = selectedSites.includes(s)
@@ -376,12 +481,15 @@ function App() {
           <label>
             <input type="checkbox" checked={noRateLimit} onChange={(e) => setNoRateLimit(e.target.checked)} /> no_rate_limit
           </label>
-          <label>
+          <label title="Show info-level logs in console">
+            <input type="checkbox" checked={verbose} onChange={(e) => setVerbose(e.target.checked)} /> verbose
+          </label>
+          <label title="Show debug-level logs (more detailed than verbose)">
             <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> debug
           </label>
         </div>
       </div>
-      {error && <p style={{ color: 'tomato' }}>{error}</p>}
+      {displayError && <p style={{ color: 'tomato' }}>{displayError}</p>}
       <div className="results-container">
         {groupedResults.map((group, i) => (
           <div key={i} className="result-card">
@@ -402,7 +510,7 @@ function App() {
             </div>
           </div>
         ))}
-        {results.length === 0 && !loading && <p>No results yet.</p>}
+        {displayResults.length === 0 && !isLoading && <p>No results yet.</p>}
       </div>
     </div>
   )

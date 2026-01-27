@@ -76,7 +76,7 @@ pub struct CacheEntry {
 
 ---
 
-## 3. Anti-Detection Enhancements
+## 3. Anti-Detection Enhancements (completed)
 
 ### Implementation Details
 
@@ -137,7 +137,7 @@ rate_limit_delay_ms = 1000
 
 ---
 
-## 5. Error Handling & Resilience
+## 5. Error Handling & Resilience (completed)
 
 ### Implementation Details
 
@@ -166,12 +166,12 @@ pub struct CircuitBreaker {
 
 ---
 
-## 7. GUI Improvements - Real-time Results
+## 7. GUI Improvements - Real-time Results (completed)
 
 ### Implementation Details
 
-- Implement WebSocket or SSE for real-time updates
-- Add per-site progress indicators
+- Implemented Tauri events for real-time updates
+- Added per-site progress indicators
 - Stream results as they become available
 - Update React components for live updates
 
@@ -180,7 +180,7 @@ pub struct CircuitBreaker {
 ```typescript
 // gui/src/hooks/useRealtimeSearch.ts
 export const useRealtimeSearch = () => {
-  // WebSocket connection for live results
+  // Tauri event listeners for live results
   // Progress tracking per site
   // Result streaming state management
 };
@@ -188,26 +188,27 @@ export const useRealtimeSearch = () => {
 
 ### Backend Changes
 
-- Add Tauri events for progress updates
-- Modify search to emit results as ready
-- Implement result streaming in CLI and GUI
+- Added `search_gui_streaming` Tauri command
+- Emits `search:progress`, `search:result`, `search:complete` events
+- Per-site status tracking (pending/fetching/parsing/completed/failed)
 
 ### TUI Real-time Updates
 
-- Modify `run_live_tui()` to accept streamed results
-- Add progress bars per site
-- Implement incremental result display
+- Added progress indicator showing sites being searched
+- Per-site completion status with result count
+- Displays live updates as each site completes
 
 ---
 
-## 9. Search Features - Advanced Operators
+## 9. Search Features - Advanced Operators (completed)
 
 ### Implementation Details
 
 - Add parser for search operators
 - Implement site: , -exclude , "exact phrase" operators
 - Add regular expression support
-- Update query normalization to preserve operators
+- Update query normalization to strip operators before URL building
+- Support comma-separated sites: `site:fitgirl,dodi,elamigos`
 
 ### Code Changes
 
@@ -224,9 +225,10 @@ pub struct AdvancedQuery {
 
 ### Integration
 
-- Update `normalize_query()` to parse operators
-- Modify result filtering to apply advanced criteria
-- Add help text for operators in CLI and GUI
+- `normalize_query()` now strips operators (site:, -term, "phrase", regex:) before URL building
+- Operators were previously sent to sites, causing no results - now fixed
+- Result filtering applies advanced criteria after fetching
+- Comma-separated sites supported: `site:fitgirl,dodi` expands to multiple restrictions
 
 ---
 
@@ -334,21 +336,24 @@ pub struct RateLimiter {
 
 ---
 
-## 12. Docker & Deployment Enhancements
+## 12. Docker & Deployment Enhancements (completed)
 
 ### Implementation Details
 
-- Health checks for FlareSolverr
-- Graceful shutdown handling
-- Docker Compose profiles
-- Kubernetes manifests
+- Health checks for FlareSolverr and app service
+- Graceful shutdown handling with stop_grace_period
+- Docker Compose monitoring profile
+- Prometheus and Grafana services
 
 ### Docker Changes
 
-```dockerfile
-# Add health check to Dockerfile
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8191/v1 || exit 1
+```yaml
+# docker-compose.yml app service
+healthcheck:
+  test: ["CMD", "/usr/local/bin/websearcher", "--version"]
+  interval: 30s
+  timeout: 5s
+stop_grace_period: 10s
 ```
 
 ### Docker Compose Profiles
@@ -356,17 +361,21 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 ```yaml
 # docker-compose.yml
 profiles:
-  development:
-    # Debug tools, hot reload
-  production:
-    # Optimized builds, monitoring
-  testing:
-    # Test environment, mocks
+  cf: FlareSolverr for Cloudflare bypass
+  playwright: Browser automation for cs.rin.ru
+  monitoring: Prometheus + Grafana observability
 ```
+
+### Monitoring Stack
+
+- Prometheus on port 9090 with auto-configured scraping
+- Grafana on port 3000 with pre-built dashboard
+- 9 panels: requests/sec, success rate, cache hits, response times
+- Persistent volumes for data retention
 
 ---
 
-## 13. Content Analysis
+## 13. Content Analysis (completed)
 
 ### Implementation Details
 
@@ -409,12 +418,12 @@ pub struct ContentAnalyzer {
 3. Advanced search operators
 4. Content analysis basics
 
-### Phase 3 (Week 5-6): User Experience
+### Phase 3 (Week 5-6): User Experience (completed)
 
-1. Real-time results in GUI
-2. TUI real-time updates
-3. Docker enhancements
-4. Full observability suite
+1. Real-time results in GUI - Tauri events + useRealtimeSearch hook
+2. TUI real-time updates - Progress indicator per site
+3. Docker enhancements - Health checks, graceful shutdown, monitoring profile
+4. Full observability suite - Grafana dashboard with 9 panels
 
 ### Phase 4 (Week 7-8): Polish & Testing
 

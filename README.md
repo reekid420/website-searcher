@@ -10,6 +10,10 @@ Cross-platform CLI and GUI application that queries multiple game download sites
 
 - **Parallel Search** - Query 13+ sites simultaneously
 - **Multiple Outputs** - JSON, table, or interactive TUI
+- **Live Progress TUI** - Real-time per-site status during search
+- **Advanced Search Operators** - Filter by site, exclude terms, exact phrases, regex
+- **Multi-Query Syntax** - Search different games on different sites with `|` separator
+- **Invert Site Selection** - Exclude specific sites with `--invert-sites`
 - **Cloudflare Bypass** - Integrated FlareSolverr support
 - **Cross-Platform** - Windows, macOS, Linux (x64 & ARM)
 - **GUI & CLI** - Tauri-based desktop app or terminal tool
@@ -17,6 +21,7 @@ Cross-platform CLI and GUI application that queries multiple game download sites
 - **Smart Caching** - TTL-based cache with configurable expiration
 - **Rate Limiting** - Exponential backoff and per-site rate controls
 - **Monitoring** - Prometheus metrics and structured logging
+- **Configurable Logging** - Verbose and debug log levels
 
 ## Quick Start
 
@@ -55,6 +60,20 @@ websearcher "elden ring" --limit 5 --format table
 # Search specific sites
 websearcher "starfield" --sites fitgirl,dodi,steamrip
 
+# Search all sites EXCEPT fitgirl
+websearcher "elden ring" --sites fitgirl --invert-sites
+
+# Advanced search operators
+websearcher "elden ring site:fitgirl -deluxe"
+websearcher '"shadow of the erdtree" site:dodi'
+websearcher "cyberpunk regex:v[0-9]+\.[0-9]+"
+
+# Multi-query: different games on different sites
+websearcher "elden ring site:fitgirl | minecraft site:csrin"
+
+# Verbose logging
+websearcher "elden ring" --verbose
+
 # Interactive mode
 websearcher
 
@@ -64,15 +83,17 @@ ws --gui
 
 ### CLI Options
 
-| Flag                   | Description                    |
-| ---------------------- | ------------------------------ |
-| `--limit N`            | Results per site (default: 10) |
-| `--sites a,b,c`        | Filter sites                   |
-| `--format json\|table` | Output format                  |
-| `--debug`              | Write HTML samples to `debug/` |
-| `--no-cf`              | Disable Cloudflare solver      |
-| `--no-cache`           | Skip cache for fresh results    |
-| `--json`               | Alias for `--format json`      |
+| Flag                   | Description                              |
+| ---------------------- | ---------------------------------------- |
+| `--limit N`            | Results per site (default: 10)           |
+| `--sites a,b,c`        | Filter sites                             |
+| `--invert-sites`       | Invert site selection (exclude listed)   |
+| `--format json\|table` | Output format                            |
+| `-v, --verbose`        | Enable info-level logging                |
+| `--debug`              | Write HTML samples to `debug/`           |
+| `--no-cf`              | Disable Cloudflare solver                |
+| `--no-cache`           | Skip cache for fresh results             |
+| `--json`               | Alias for `--format json`                |
 
 See [docs/CLI.md](docs/CLI.md) for complete reference.
 
@@ -102,19 +123,20 @@ See [docs/DOCKER.md](docs/DOCKER.md) for advanced usage.
 
 ## Documentation
 
-| Document                             | Description                 |
-| ------------------------------------ | --------------------------- |
-| [ARCHITECTURE](docs/ARCHITECTURE.md) | System design and data flow |
-| [INSTALLATION](docs/INSTALLATION.md) | Setup for all platforms     |
-| [CLI](docs/CLI.md)                   | Command-line reference      |
-| [GUI](docs/GUI.md)                   | Desktop application guide   |
-| [SITES](docs/SITES.md)               | Supported sites details     |
-| [DEVELOPMENT](docs/DEVELOPMENT.md)   | Contributing guide          |
-| [DOCKER](docs/DOCKER.md)             | Container usage             |
-| [API](docs/API.md)                   | Core library reference      |
-| [TESTING](docs/TESTING.md)           | Test suite documentation    |
-| [PACKAGING](docs/PACKAGING.md)       | Build and packaging         |
-| [MONITORING](docs/MONITORING.md)     | Metrics and logging guide   |
+| Document                                   | Description                 |
+| ------------------------------------------ | --------------------------- |
+| [ARCHITECTURE](docs/ARCHITECTURE.md)       | System design and data flow |
+| [INSTALLATION](docs/INSTALLATION.md)       | Setup for all platforms     |
+| [CLI](docs/CLI.md)                         | Command-line reference      |
+| [GUI](docs/GUI.md)                         | Desktop application guide   |
+| [ADVANCED_SEARCH](docs/ADVANCED_SEARCH.md) | Search operators guide      |
+| [SITES](docs/SITES.md)                     | Supported sites details     |
+| [DEVELOPMENT](docs/DEVELOPMENT.md)         | Contributing guide          |
+| [DOCKER](docs/DOCKER.md)                   | Container usage             |
+| [API](docs/API.md)                         | Core library reference      |
+| [TESTING](docs/TESTING.md)                 | Test suite documentation    |
+| [PACKAGING](docs/PACKAGING.md)             | Build and packaging         |
+| [MONITORING](docs/MONITORING.md)           | Metrics and logging guide   |
 
 ## Development
 

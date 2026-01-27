@@ -6,6 +6,7 @@ use reqwest::header::{
 };
 use tokio::sync::Semaphore;
 use website_searcher_core::cache::{MIN_CACHE_SIZE, SearchCache};
+use website_searcher_core::query_parser::{AdvancedQuery, MultiQuery, filter_results};
 use website_searcher_core::rate_limiter::RateLimiter;
 use website_searcher_core::{cf, config, fetcher, models, parser, query};
 
@@ -24,6 +25,7 @@ struct SearchArgs {
     cutoff: Option<usize>,
     sites: Option<Vec<String>>, // names
     debug: Option<bool>,
+    verbose: Option<bool>,
     no_cf: Option<bool>,
     cf_url: Option<String>,
     cookie: Option<String>,
@@ -31,6 +33,30 @@ struct SearchArgs {
     csrin_search: Option<bool>,
     no_playwright: Option<bool>,
     no_rate_limit: Option<bool>,
+}
+
+/// Progress event for streaming search updates
+#[derive(serde::Serialize, Clone)]
+struct SearchProgress {
+    site: String,
+    status: String, // "started", "fetching", "parsing", "completed", "failed"
+    results_count: usize,
+    message: Option<String>,
+}
+
+/// Individual result event for streaming
+#[derive(serde::Serialize, Clone)]
+struct StreamedResult {
+    site: String,
+    result: models::SearchResult,
+}
+
+/// Final completion event
+#[derive(serde::Serialize, Clone)]
+struct SearchComplete {
+    total_results: usize,
+    sites_completed: usize,
+    sites_failed: usize,
 }
 
 #[tauri::command]
@@ -427,6 +453,10 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
     combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.title.cmp(&b.title)));
     combined.dedup_by(|a, b| a.site == b.site && a.url == b.url);
 
+    // Apply advanced query filtering (site:, -exclude, "phrase", regex: operators)
+    let advanced_query = AdvancedQuery::parse(&args.query);
+    let mut combined = filter_results(combined, &advanced_query);
+
     // Apply overall cutoff if specified (0 means no cutoff)
     if let Some(cutoff) = args.cutoff
         && cutoff > 0
@@ -438,21 +468,365 @@ async fn search_gui(args: SearchArgs) -> Result<Vec<models::SearchResult>, Strin
     Ok(combined)
 }
 
+/// Streaming search that emits events as results arrive
+/// Events emitted:
+/// - "search:progress" - SearchProgress for status updates
+/// - "search:result" - StreamedResult for individual results
+/// - "search:complete" - SearchComplete when done
+#[tauri::command]
+async fn search_gui_streaming(
+    app_handle: tauri::AppHandle,
+    args: SearchArgs,
+) -> Result<Vec<models::SearchResult>, String> {
+    use tauri::Emitter;
+
+    if args.query.trim().is_empty() {
+        return Err("empty search phrase".to_string());
+    }
+    let limit = args.limit.unwrap_or(10);
+    let use_cf = !args.no_cf.unwrap_or(false);
+    let mut cf_url = args
+        .cf_url
+        .unwrap_or_else(|| "http://localhost:8191/v1".to_string());
+    if cf_url == "http://localhost:8191/v1"
+        && let Ok(env_cf) = std::env::var("CF_URL")
+        && !env_cf.trim().is_empty()
+    {
+        cf_url = env_cf;
+    }
+
+    let normalized = query::normalize_query(&args.query);
+    let all_sites = config::site_configs();
+    let selected_sites: Vec<models::SiteConfig> = if let Some(names) = args.sites {
+        let wanted: Vec<String> = names
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        all_sites
+            .into_iter()
+            .filter(|s| wanted.iter().any(|w| w.eq_ignore_ascii_case(&s.name)))
+            .collect()
+    } else {
+        all_sites
+    };
+
+    let _total_sites = selected_sites.len();
+
+    // Emit initial progress for all sites
+    for site in &selected_sites {
+        let _ = app_handle.emit(
+            "search:progress",
+            SearchProgress {
+                site: site.name.clone(),
+                status: "pending".to_string(),
+                results_count: 0,
+                message: None,
+            },
+        );
+    }
+
+    let client = fetcher::build_http_client();
+    let semaphore = Arc::new(Semaphore::new(3));
+    let rate_limiter = if !args.no_rate_limit.unwrap_or(false) {
+        Some(Arc::new(tokio::sync::Mutex::new(RateLimiter::new())))
+    } else {
+        None
+    };
+
+    // Optional Cookie header
+    let cookie_headers: Option<ReqHeaderMap> = if let Some(c) = args.cookie.as_deref() {
+        match HeaderValue::from_str(c) {
+            Ok(v) => {
+                let mut h = ReqHeaderMap::new();
+                h.insert(COOKIE, v);
+                Some(h)
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    let mut tasks = FuturesUnordered::new();
+    for site in selected_sites {
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        let client = client.clone();
+        let query = normalized.clone();
+        let cf_url = cf_url.clone();
+        let cookie_headers = cookie_headers.clone();
+        let csrin_pages = args.csrin_pages.unwrap_or(1);
+        let csrin_search = args.csrin_search.unwrap_or(false);
+        let no_playwright = args.no_playwright.unwrap_or(false);
+        let rate_limiter = rate_limiter.clone();
+        let app_handle = app_handle.clone();
+
+        tasks.push(tokio::spawn(async move {
+            let _permit = permit;
+            let site_name = site.name.clone();
+
+            // Emit "fetching" status
+            let _ = app_handle.emit(
+                "search:progress",
+                SearchProgress {
+                    site: site_name.clone(),
+                    status: "fetching".to_string(),
+                    results_count: 0,
+                    message: Some("Fetching results...".to_string()),
+                },
+            );
+
+            let base_url = match site.search_kind {
+                models::SearchKind::ListingPage => site
+                    .listing_path
+                    .clone()
+                    .unwrap_or(site.base_url.clone())
+                    .to_string(),
+                _ => query::build_search_url(&site, &query),
+            };
+
+            // Build page URLs - same logic as non-streaming search_gui
+            let page_urls: Vec<String> = if site.name.eq_ignore_ascii_case("csrin") {
+                let mut urls = Vec::new();
+                if csrin_search {
+                    let qenc = serde_urlencoded::to_string([
+                        ("keywords", query.as_str()),
+                        ("sr", "topics"),
+                    ])
+                    .unwrap_or_else(|_| format!("keywords={}&sr=topics", query.replace(' ', "+")));
+                    let search_base = "https://cs.rin.ru/forum/search.php";
+                    urls.push(format!("{}?{}&fid%5B%5D=10", search_base, qenc));
+                } else {
+                    let pages = csrin_pages.max(1);
+                    urls.push(base_url.clone());
+                    for i in 1..pages {
+                        let start = i * 100;
+                        if base_url.contains('?') {
+                            urls.push(format!("{}&start={}", base_url, start));
+                        } else {
+                            urls.push(format!("{}?start={}", base_url, start));
+                        }
+                    }
+                }
+                urls
+            } else {
+                vec![base_url.clone()]
+            };
+
+            let mut results: Vec<models::SearchResult> = Vec::new();
+
+            // Simplified fetch - use solver or direct based on site config
+            let cf_local = cf_url.contains("127.0.0.1") || cf_url.contains("localhost");
+            let non_default_cf = cf_url != "http://localhost:8191/v1";
+            let use_solver = use_cf && (site.requires_cloudflare || cf_local || non_default_cf);
+
+            // Try Playwright for csrin first (when solver not preferred)
+            let prefer_solver = use_solver;
+            if site.name.eq_ignore_ascii_case("csrin") && !no_playwright && !prefer_solver {
+                let cookie_val = cookie_headers
+                    .as_ref()
+                    .and_then(|h| h.get(COOKIE))
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                if let Some(html) = fetch_csrin_playwright_html(&query, cookie_val).await {
+                    results = parser::parse_results(&site, &html, &query);
+                }
+            }
+
+            // If Playwright didn't yield results, fetch from page URLs
+            if results.is_empty() {
+                for url in page_urls {
+                    let html = if use_solver {
+                        (if cookie_headers.is_some() {
+                            cf::fetch_via_solver_with_headers(
+                                &client,
+                                &url,
+                                &cf_url,
+                                cookie_headers.clone(),
+                            )
+                            .await
+                        } else {
+                            cf::fetch_via_solver(&client, &url, &cf_url).await
+                        })
+                        .unwrap_or_default()
+                    } else {
+                        let rate_limiter_ref = if let Some(ref rl) = rate_limiter {
+                            Some(&mut *rl.lock().await)
+                        } else {
+                            None
+                        };
+                        (if cookie_headers.is_some() {
+                            fetcher::fetch_with_retry_headers(
+                                &client,
+                                &url,
+                                cookie_headers.clone(),
+                                rate_limiter_ref,
+                                Some(&site.name),
+                            )
+                            .await
+                        } else {
+                            fetcher::fetch_with_retry(
+                                &client,
+                                &url,
+                                rate_limiter_ref,
+                                Some(&site.name),
+                            )
+                            .await
+                        })
+                        .unwrap_or_default()
+                    };
+
+                    // Emit "parsing" status
+                    let _ = app_handle.emit(
+                        "search:progress",
+                        SearchProgress {
+                            site: site_name.clone(),
+                            status: "parsing".to_string(),
+                            results_count: 0,
+                            message: Some("Parsing results...".to_string()),
+                        },
+                    );
+
+                    let page_results = parser::parse_results(&site, &html, &query);
+                    results.extend(page_results);
+
+                    if results.len() >= 5000 {
+                        break; // Safety cap
+                    }
+                }
+            }
+
+            // Final Playwright fallback for csrin if still empty
+            if site.name.eq_ignore_ascii_case("csrin") && results.is_empty() && !no_playwright {
+                let cookie_val = cookie_headers
+                    .as_ref()
+                    .and_then(|h| h.get(COOKIE))
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                if let Some(html) = fetch_csrin_playwright_html(&query, cookie_val).await {
+                    let rs = parser::parse_results(&site, &html, &query);
+                    results.extend(rs);
+                }
+            }
+
+            // Apply csrin filtering - only keep viewtopic.php links with title matching query
+            if site.name.eq_ignore_ascii_case("csrin") {
+                let q_lower = query.to_lowercase();
+                results.retain(|r| r.url.contains("viewtopic.php"));
+                results.retain(|r| r.title.to_lowercase().contains(&q_lower));
+            }
+
+            // Truncate per-site
+            results.truncate(limit);
+
+            // Emit each result as it's processed
+            for result in &results {
+                let _ = app_handle.emit(
+                    "search:result",
+                    StreamedResult {
+                        site: site_name.clone(),
+                        result: result.clone(),
+                    },
+                );
+            }
+
+            // Emit "completed" status
+            let _ = app_handle.emit(
+                "search:progress",
+                SearchProgress {
+                    site: site_name.clone(),
+                    status: "completed".to_string(),
+                    results_count: results.len(),
+                    message: None,
+                },
+            );
+
+            results
+        }));
+    }
+
+    let mut combined: Vec<models::SearchResult> = Vec::new();
+    let mut sites_completed = 0usize;
+    let mut sites_failed = 0usize;
+
+    while let Some(joined) = tasks.next().await {
+        match joined {
+            Ok(site_results) => {
+                combined.extend(site_results);
+                sites_completed += 1;
+            }
+            Err(_) => {
+                sites_failed += 1;
+            }
+        }
+    }
+
+    // Dedup + sort
+    combined.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.title.cmp(&b.title)));
+    combined.dedup_by(|a, b| a.site == b.site && a.url == b.url);
+
+    // Apply advanced query filtering (site:, -exclude, "phrase", regex: operators)
+    let advanced_query = AdvancedQuery::parse(&args.query);
+    let mut combined = filter_results(combined, &advanced_query);
+
+    // Apply overall cutoff if specified
+    if let Some(cutoff) = args.cutoff
+        && cutoff > 0
+        && combined.len() > cutoff
+    {
+        combined.truncate(cutoff);
+    }
+
+    // Emit completion event
+    let _ = app_handle.emit(
+        "search:complete",
+        SearchComplete {
+            total_results: combined.len(),
+            sites_completed,
+            sites_failed,
+        },
+    );
+
+    Ok(combined)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Check environment for log level override
+            let log_level = std::env::var("LOG_LEVEL")
+                .ok()
+                .and_then(|l| match l.to_lowercase().as_str() {
+                    "debug" => Some(log::LevelFilter::Debug),
+                    "info" | "verbose" => Some(log::LevelFilter::Info),
+                    "warn" => Some(log::LevelFilter::Warn),
+                    "error" => Some(log::LevelFilter::Error),
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    // Default: Info in debug builds, Error in release builds
+                    if cfg!(debug_assertions) {
+                        log::LevelFilter::Info
+                    } else {
+                        log::LevelFilter::Error
+                    }
+                });
+
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log_level)
+                    .build(),
+            )?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             search_gui,
+            search_gui_streaming,
             list_sites,
             get_cache,
             get_cached_results,
@@ -563,6 +937,66 @@ async fn fetch_csrin_feed(
     }
 }
 
+/// Resolve the csrin_search.cjs script path with fallback search order:
+/// 1. CSRIN_SCRIPT_PATH env override
+/// 2. Executable's directory + scripts/csrin_search.cjs
+/// 3. Resource directory (Tauri bundled resources)
+/// 4. Relative path from CWD (../scripts/, ./scripts/)
+fn resolve_csrin_script_path() -> Option<std::path::PathBuf> {
+    // 1. Environment variable override
+    if let Ok(env_path) = std::env::var("CSRIN_SCRIPT_PATH") {
+        let p = std::path::PathBuf::from(&env_path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Executable's directory + scripts/csrin_search.cjs
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            // Try scripts/ subdirectory (installed location)
+            let script_in_exe_scripts = exe_dir.join("scripts").join("csrin_search.cjs");
+            if script_in_exe_scripts.exists() {
+                return Some(script_in_exe_scripts);
+            }
+            // Try alongside executable
+            let script_beside_exe = exe_dir.join("csrin_search.cjs");
+            if script_beside_exe.exists() {
+                return Some(script_beside_exe);
+            }
+            // For development: go up to project root
+            if let Some(parent) = exe_dir.parent() {
+                let dev_script = parent.join("scripts").join("csrin_search.cjs");
+                if dev_script.exists() {
+                    return Some(dev_script);
+                }
+                // Go up one more level (target/debug -> target -> project)
+                if let Some(grandparent) = parent.parent() {
+                    let dev_script = grandparent.join("scripts").join("csrin_search.cjs");
+                    if dev_script.exists() {
+                        return Some(dev_script);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Relative paths from current working directory
+    let relative_paths = [
+        "../scripts/csrin_search.cjs",
+        "./scripts/csrin_search.cjs",
+        "scripts/csrin_search.cjs",
+    ];
+    for rel_path in relative_paths {
+        let p = std::path::PathBuf::from(rel_path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    None
+}
+
 async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Option<String> {
     // Allow tests/dev to inject HTML
     if let Ok(fake) = std::env::var("CS_PLAYWRIGHT_HTML")
@@ -570,10 +1004,13 @@ async fn fetch_csrin_playwright_html(query: &str, cookie: Option<String>) -> Opt
     {
         return Some(fake);
     }
-    let script = "../scripts/csrin_search.cjs";
+
+    // Resolve script path with fallback order
+    let script_path = resolve_csrin_script_path()?;
+
     let mut cmd = tokio::process::Command::new("node");
     use std::process::Stdio;
-    cmd.arg(script).arg(query);
+    cmd.arg(&script_path).arg(query);
     if let Some(c) = cookie {
         cmd.env("PLAYWRIGHT_COOKIE", c);
     }
@@ -955,6 +1392,7 @@ mod tests {
             cutoff: None,
             sites: None,
             debug: None,
+            verbose: None,
             no_cf: None,
             cf_url: None,
             cookie: None,
@@ -1040,6 +1478,7 @@ mod tests {
             cutoff: None,
             sites: Some(vec!["unknown-fake-site".to_string()]),
             debug: None,
+            verbose: None,
             no_cf: Some(true),
             cf_url: None,
             cookie: None,

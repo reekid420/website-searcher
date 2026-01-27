@@ -280,9 +280,9 @@ pub fn deduplicate_results_with_threshold(
         .collect()
 }
 
-/// Deduplicate results using default threshold
+/// Deduplicate results using default threshold (0.95 for strict matching)
 pub fn deduplicate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
-    deduplicate_results_with_threshold(results, 0.85)
+    deduplicate_results_with_threshold(results, 0.95)
 }
 
 #[cfg(test)]

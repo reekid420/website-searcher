@@ -1,0 +1,36 @@
+# Prometheus configuration for website-searcher
+#
+# This file configures Prometheus to scrape metrics from the website-searcher
+# application running in Docker.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           # - alertmanager:9093
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Website-searcher metrics
+  - job_name: "website-searcher"
+    static_configs:
+      - targets: ["app:9898"]
+    # Metrics endpoint details
+    # Available metrics:
+    # - website_searcher_searches_total{site}
+    # - website_searcher_searches_success_total{site}
+    # - website_searcher_searches_failure_total{site}
+    # - website_searcher_cache_hits_total
+    # - website_searcher_cache_misses_total
+    # - website_searcher_search_duration_seconds{site}
+    # - website_searcher_active_requests{site}
+    # - website_searcher_starts

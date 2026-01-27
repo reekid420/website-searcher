@@ -54,6 +54,8 @@ docker build --build-arg RUN_TESTS=true -t websearcher .
 | `app`          | (always)     | Main application                 |
 | `flaresolverr` | `cf`         | Cloudflare bypass proxy          |
 | `playwright`   | `playwright` | Browser automation for cs.rin.ru |
+| `prometheus`   | `monitoring` | Metrics collection               |
+| `grafana`      | `monitoring` | Metrics visualization dashboard  |
 
 ### Usage
 
@@ -73,6 +75,11 @@ docker compose run --rm app "elden ring" --format table
 # Run Playwright search
 docker compose --profile playwright run --rm playwright \
   bash -c "npm i -D playwright && node scripts/csrin_search.cjs 'elden ring'"
+
+# Start with monitoring (Prometheus + Grafana)
+docker compose --profile monitoring up -d
+# Access Grafana at http://localhost:3000 (admin/admin)
+# Access Prometheus at http://localhost:9090
 ```
 
 ### Environment Variables

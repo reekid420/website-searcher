@@ -1,0 +1,16 @@
+# Grafana dashboard provisioning
+# This file tells Grafana where to find dashboard JSON files
+
+apiVersion: 1
+
+providers:
+  - name: "website-searcher"
+    orgId: 1
+    folder: "Website Searcher"
+    folderUid: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
