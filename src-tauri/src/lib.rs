@@ -6,7 +6,7 @@ use reqwest::header::{
 };
 use tokio::sync::Semaphore;
 use website_searcher_core::cache::{MIN_CACHE_SIZE, SearchCache};
-use website_searcher_core::query_parser::{AdvancedQuery, MultiQuery, filter_results};
+use website_searcher_core::query_parser::{AdvancedQuery, filter_results};
 use website_searcher_core::rate_limiter::RateLimiter;
 use website_searcher_core::{cf, config, fetcher, models, parser, query};
 
@@ -808,7 +808,7 @@ pub fn run() {
                     "error" => Some(log::LevelFilter::Error),
                     _ => None,
                 })
-                .unwrap_or_else(|| {
+                .unwrap_or({
                     // Default: Info in debug builds, Error in release builds
                     if cfg!(debug_assertions) {
                         log::LevelFilter::Info
@@ -952,30 +952,30 @@ fn resolve_csrin_script_path() -> Option<std::path::PathBuf> {
     }
 
     // 2. Executable's directory + scripts/csrin_search.cjs
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            // Try scripts/ subdirectory (installed location)
-            let script_in_exe_scripts = exe_dir.join("scripts").join("csrin_search.cjs");
-            if script_in_exe_scripts.exists() {
-                return Some(script_in_exe_scripts);
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        // Try scripts/ subdirectory (installed location)
+        let script_in_exe_scripts = exe_dir.join("scripts").join("csrin_search.cjs");
+        if script_in_exe_scripts.exists() {
+            return Some(script_in_exe_scripts);
+        }
+        // Try alongside executable
+        let script_beside_exe = exe_dir.join("csrin_search.cjs");
+        if script_beside_exe.exists() {
+            return Some(script_beside_exe);
+        }
+        // For development: go up to project root
+        if let Some(parent) = exe_dir.parent() {
+            let dev_script = parent.join("scripts").join("csrin_search.cjs");
+            if dev_script.exists() {
+                return Some(dev_script);
             }
-            // Try alongside executable
-            let script_beside_exe = exe_dir.join("csrin_search.cjs");
-            if script_beside_exe.exists() {
-                return Some(script_beside_exe);
-            }
-            // For development: go up to project root
-            if let Some(parent) = exe_dir.parent() {
-                let dev_script = parent.join("scripts").join("csrin_search.cjs");
+            // Go up one more level (target/debug -> target -> project)
+            if let Some(grandparent) = parent.parent() {
+                let dev_script = grandparent.join("scripts").join("csrin_search.cjs");
                 if dev_script.exists() {
                     return Some(dev_script);
-                }
-                // Go up one more level (target/debug -> target -> project)
-                if let Some(grandparent) = parent.parent() {
-                    let dev_script = grandparent.join("scripts").join("csrin_search.cjs");
-                    if dev_script.exists() {
-                        return Some(dev_script);
-                    }
                 }
             }
         }
